@@ -51,8 +51,10 @@ private struct NextPrevView: View {
     }
 }
 
-private struct RefreshHomeView: View {
+private struct RefreshBookmarksView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var webBrowser: WebBrowserSettings
+    @Binding var showingBookmarks: Bool
 
     var body: some View {
         HStack {
@@ -63,10 +65,71 @@ private struct RefreshHomeView: View {
                     .padding(10)
             }
             Button {
-                model.loadWebBrowserHome()
+                showingBookmarks = true
             } label: {
-                Image(systemName: "house")
+                Image(systemName: "bookmark")
                     .padding(10)
+            }
+        }
+    }
+}
+
+private struct BookmarksToolbar: ToolbarContent {
+    @Binding var showingBookmarks: Bool
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button {
+                showingBookmarks = false
+            } label: {
+                Image(systemName: "xmark")
+            }
+        }
+    }
+}
+
+private struct BookmarksView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var webBrowser: WebBrowserSettings
+    @Binding var showingBookmarks: Bool
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    List {
+                        ForEach(webBrowser.bookmarks) { bookmark in
+                            HStack {
+                                DraggableItemPrefixView()
+                                Button {
+                                    model.loadWebBrowserPage(url: bookmark.url)
+                                    showingBookmarks = false
+                                } label: {
+                                    Text(bookmark.url)
+                                }
+                            }
+                        }
+                        .onDelete {
+                            webBrowser.bookmarks.remove(atOffsets: $0)
+                        }
+                        .onMove { froms, to in
+                            webBrowser.bookmarks.move(fromOffsets: froms, toOffset: to)
+                        }
+                    }
+                } footer: {
+                    SwipeLeftToDeleteHelpView(kind: String(localized: "a bookmark"))
+                }
+                Section {
+                    TextButtonView("Create bookmark") {
+                        let bookmark = WebBrowserBookmarkSettings()
+                        bookmark.url = model.webBrowserUrl
+                        webBrowser.bookmarks.append(bookmark)
+                    }
+                }
+            }
+            .navigationTitle("Bookmarks")
+            .toolbar {
+                BookmarksToolbar(showingBookmarks: $showingBookmarks)
             }
         }
     }
@@ -74,16 +137,18 @@ private struct RefreshHomeView: View {
 
 struct WebBrowserView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var orientation: Orientation
+    @State var showingBookmarks = false
 
     var body: some View {
         VStack(spacing: 0) {
-            if model.isPortrait() {
+            if orientation.isPortrait {
                 VStack {
                     UrlView()
                     HStack {
                         NextPrevView()
                         Spacer()
-                        RefreshHomeView()
+                        RefreshBookmarksView(webBrowser: model.database.webBrowser, showingBookmarks: $showingBookmarks)
                     }
                 }
                 .padding(3)
@@ -91,11 +156,14 @@ struct WebBrowserView: View {
                 HStack {
                     NextPrevView()
                     UrlView()
-                    RefreshHomeView()
+                    RefreshBookmarksView(webBrowser: model.database.webBrowser, showingBookmarks: $showingBookmarks)
                 }
                 .padding(3)
             }
             WebView()
+                .sheet(isPresented: $showingBookmarks) {
+                    BookmarksView(webBrowser: model.database.webBrowser, showingBookmarks: $showingBookmarks)
+                }
         }
         .background(ignoresSafeAreaEdges: .bottom)
     }

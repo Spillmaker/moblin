@@ -14,11 +14,6 @@ struct MpegTsPacket {
     var adaptationField: MpegTsAdaptationField?
     var payload = Data()
 
-    private func unusedSize() -> Int {
-        let adaptationFieldSize = Int(adaptationField?.calcLength() ?? 0)
-        return MpegTsPacket.size - MpegTsPacket.fixedHeaderSize - adaptationFieldSize - payload.count
-    }
-
     init(id: UInt16) {
         self.id = id
     }
@@ -37,7 +32,9 @@ struct MpegTsPacket {
         let hasAdaptationField = (byte & 0x20) == 0x20
         if hasAdaptationField {
             let length = try reader.readUInt8()
-            adaptationField = try MpegTsAdaptationField(reader: reader, length: length)
+            if length > 0 {
+                adaptationField = try MpegTsAdaptationField(reader: reader, length: length)
+            }
         }
         let hasPayload = (byte & 0x10) == 0x10
         if hasPayload {
@@ -45,42 +42,30 @@ struct MpegTsPacket {
         }
     }
 
-    mutating func setPayload(_ data: Data) -> Int {
-        let payloadSize = min(data.count, unusedSize())
-        payload = data[0 ..< payloadSize]
-        let unusedSize = unusedSize()
-        if unusedSize > 0 {
-            adaptationField!.setStuffing(unusedSize)
-        }
-        return payloadSize
+    func maximumPayloadSize() -> Int {
+        return MpegTsPacket.size - MpegTsPacket.fixedHeaderSize - Int(adaptationField?.calcLength() ?? 0)
     }
 
-    mutating func setPayloadNoAdaptation(_ data: Data) {
-        payload = data
-        payload.append(Data(repeating: 0xFF, count: unusedSize()))
+    mutating func setAdaptionFieldStuffing(size: Int) {
+        adaptationField?.setStuffing(size)
     }
 
     func encodeFixedHeaderInto(pointer: UnsafeMutableRawBufferPointer) {
-        pointer.storeBytes(of: MpegTsPacket.syncByte, toByteOffset: 0, as: UInt8.self)
-        pointer.storeBytes(
-            of: (payloadUnitStartIndicator ? 0x40 : 0) | UInt8(id >> 8),
-            toByteOffset: 1,
-            as: UInt8.self
-        )
-        pointer.storeBytes(of: UInt8(id & 0x00FF), toByteOffset: 2, as: UInt8.self)
-        pointer.storeBytes(
-            of: (adaptationField != nil ? 0x20 : 0) | 0x10 | continuityCounter,
-            toByteOffset: 3,
-            as: UInt8.self
-        )
+        pointer[0] = MpegTsPacket.syncByte
+        pointer[1] = (payloadUnitStartIndicator ? 0x40 : 0) | UInt8(id >> 8)
+        pointer[2] = UInt8(id & 0xFF)
+        pointer[3] = (adaptationField != nil ? 0x20 : 0) | 0x10 | continuityCounter
     }
 
     func encode() -> Data {
-        var header = Data(count: 4)
-        header.withUnsafeMutableBytes { pointer in
-            encodeFixedHeaderInto(pointer: pointer)
+        var data = Data(count: 4)
+        data.withUnsafeMutableBytes {
+            encodeFixedHeaderInto(pointer: $0)
         }
-        return header + (adaptationField?.encode() ?? Data()) + payload
+        if let adaptationField {
+            data += adaptationField.encode()
+        }
+        return data + payload
     }
 }
 
@@ -101,8 +86,10 @@ enum TSTimestamp {
     static func decode(_ data: Data, offset: Int = 0) -> Int64 {
         var result: Int64 = 0
         result |= Int64(data[offset + 0] & 0x0E) << 29
-        result |= Int64(data[offset + 1]) << 22 | Int64(data[offset + 2] & 0xFE) << 14
-        result |= Int64(data[offset + 3]) << 7 | Int64(data[offset + 3] & 0xFE) << 1
+        result |= Int64(data[offset + 1]) << 22
+        result |= Int64(data[offset + 2] & 0xFE) << 14
+        result |= Int64(data[offset + 3]) << 7
+        result |= Int64(data[offset + 4] & 0xFE) >> 1
         return result
     }
 }

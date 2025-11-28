@@ -4,8 +4,14 @@ import VideoToolbox
 var numberOfFailedEncodings = 0
 
 protocol VideoEncoderDelegate: AnyObject {
-    func videoEncoderOutputFormat(_ codec: VideoEncoder, _ formatDescription: CMFormatDescription)
-    func videoEncoderOutputSampleBuffer(_ codec: VideoEncoder, _ sampleBuffer: CMSampleBuffer)
+    func videoEncoderOutputFormat(_ encoder: VideoEncoder, _ formatDescription: CMFormatDescription)
+    func videoEncoderOutputSampleBuffer(_ encoder: VideoEncoder,
+                                        _ sampleBuffer: CMSampleBuffer,
+                                        _ decodeTimeStampOffset: CMTime)
+}
+
+protocol VideoEncoderControlDelegate: AnyObject {
+    func videoEncoderControlResolutionChanged(_ encoder: VideoEncoder, resolution: CGSize)
 }
 
 class VideoEncoder {
@@ -25,6 +31,7 @@ class VideoEncoder {
     private var formatDescription: CMFormatDescription?
 
     weak var delegate: (any VideoEncoderDelegate)?
+    weak var controlDelegate: (any VideoEncoderControlDelegate)?
     private var session: VTCompressionSession? {
         didSet {
             oldValue?.invalidate()
@@ -47,6 +54,7 @@ class VideoEncoder {
             self.currentBitrate = 0
             self.formatDescription = formatDescription
             numberOfFailedEncodings = 0
+            logger.info("video-encoder: Starting with codec \(self.settings.value.format)")
         }
     }
 
@@ -69,6 +77,9 @@ class VideoEncoder {
         if newBitrateVideoSize != oldBitrateVideoSize {
             session = makeSession(settings: settings, videoSize: newBitrateVideoSize)
             oldBitrateVideoSize = newBitrateVideoSize
+            let resolution = CGSize(width: Double(newBitrateVideoSize.width),
+                                    height: Double(newBitrateVideoSize.height))
+            controlDelegate?.videoEncoderControlResolutionChanged(self, resolution: resolution)
         }
         if invalidateSession {
             session = makeSession(settings: settings)
@@ -92,13 +103,23 @@ class VideoEncoder {
                     return
                 }
                 self.setFormatDescription(formatDescription: sampleBuffer.formatDescription)
-                self.delegate?.videoEncoderOutputSampleBuffer(self, sampleBuffer)
+                self.delegate?.videoEncoderOutputSampleBuffer(self,
+                                                              sampleBuffer,
+                                                              self.makeDecodeTimeStampOffset(settings))
             }
         }
         if err == kVTInvalidSessionErr {
             logger.info("video-encoder: Encode failed. Resetting session.")
             invalidateSession = true
             currentBitrate = 0
+        }
+    }
+
+    private func makeDecodeTimeStampOffset(_ settings: VideoEncoderSettings) -> CMTime {
+        if settings.allowFrameReordering {
+            return CMTime(seconds: 0.15)
+        } else {
+            return .zero
         }
     }
 
@@ -129,47 +150,31 @@ class VideoEncoder {
         }
     }
 
-    private func getLandscapeVideoSize(settings: VideoEncoderSettings) -> CMVideoDimensions {
+    private func getVideoSize(settings: VideoEncoderSettings) -> CMVideoDimensions? {
         if settings.bitRate < 100_000 {
-            return .init(width: 284, height: 160)
+            return settings.videoSize.convertTo(dimension: 160)
         } else if settings.bitRate < 250_000 {
-            return .init(width: 640, height: 360)
+            return settings.videoSize.convertTo(dimension: 360)
         } else if settings.bitRate < 500_000 {
-            return .init(width: 854, height: 480)
+            return settings.videoSize.convertTo(dimension: 480)
         } else if settings.bitRate < 750_000 {
-            return .init(width: 1280, height: 720)
-        } else {
-            return settings.videoSize
-        }
-    }
-
-    private func getPortraitVideoSize(settings: VideoEncoderSettings) -> CMVideoDimensions {
-        if settings.bitRate < 100_000 {
-            return .init(width: 160, height: 284)
-        } else if settings.bitRate < 250_000 {
-            return .init(width: 360, height: 640)
-        } else if settings.bitRate < 500_000 {
-            return .init(width: 480, height: 854)
-        } else if settings.bitRate < 750_000 {
-            return .init(width: 720, height: 1280)
+            return settings.videoSize.convertTo(dimension: 720)
+        } else if settings.bitRate < 1_500_000 {
+            return settings.videoSize.convertTo(dimension: 1080)
         } else {
             return settings.videoSize
         }
     }
 
     private func updateAdaptiveResolution(settings: VideoEncoderSettings) -> CMVideoDimensions {
-        var videoSize: CMVideoDimensions
+        var videoSize: CMVideoDimensions?
         if settings.adaptiveResolution {
-            if settings.videoSize.width > settings.videoSize.height {
-                videoSize = getLandscapeVideoSize(settings: settings)
-            } else {
-                videoSize = getPortraitVideoSize(settings: settings)
-            }
+            videoSize = getVideoSize(settings: settings)
         } else {
             videoSize = settings.videoSize
         }
-        if videoSize.height > settings.videoSize.height {
-            videoSize = settings.videoSize
+        guard let videoSize, videoSize.height <= settings.videoSize.height else {
+            return settings.videoSize
         }
         return videoSize
     }

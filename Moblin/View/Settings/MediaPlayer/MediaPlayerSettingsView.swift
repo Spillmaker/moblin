@@ -21,13 +21,9 @@ struct Video: Transferable {
 
 struct MediaPlayerSettingsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var mediaPlayers: SettingsMediaPlayers
     @ObservedObject var player: SettingsMediaPlayer
     @State var selectedVideoItem: PhotosPickerItem?
-
-    private func submitName(value: String) {
-        player.name = value.trim()
-        model.updateMediaPlayerSettings(playerId: player.id, settings: player)
-    }
 
     private func appendMedia(url: URL) {
         let file = SettingsMediaPlayerFile()
@@ -40,12 +36,10 @@ struct MediaPlayerSettingsView: View {
         NavigationLink {
             Form {
                 Section {
-                    TextEditNavigationView(
-                        title: String(localized: "Name"),
-                        value: player.name,
-                        onSubmit: submitName,
-                        capitalize: true
-                    )
+                    NameEditView(name: $player.name, existingNames: mediaPlayers.players)
+                        .onChange(of: player.name) { _ in
+                            model.updateMediaPlayerSettings(playerId: player.id, settings: player)
+                        }
                 }
                 if false {
                     Section {
@@ -55,49 +49,39 @@ struct MediaPlayerSettingsView: View {
                 Section {
                     List {
                         ForEach(player.playlist) { file in
-                            NavigationLink {
-                                MediaPlayerFileSettingsView(player: player, file: file)
-                            } label: {
-                                HStack {
-                                    DraggableItemPrefixView()
-                                    if let image = createThumbnail(path: model.mediaStorage.makePath(id: file.id)) {
-                                        Image(uiImage: image)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 90)
-                                    } else {
-                                        Image(systemName: "photo")
-                                    }
-                                    Text(file.name)
-                                }
-                            }
+                            MediaPlayerFileSettingsView(player: player, file: file)
                         }
-                        .onMove(perform: { froms, to in
+                        .onMove { froms, to in
                             player.playlist.move(fromOffsets: froms, toOffset: to)
                             model.updateMediaPlayerSettings(playerId: player.id, settings: player)
-                        })
-                        .onDelete(perform: { indexes in
+                        }
+                        .onDelete { indexes in
                             player.playlist.remove(atOffsets: indexes)
                             model.updateMediaPlayerSettings(playerId: player.id, settings: player)
-                        })
+                        }
                     }
                     PhotosPicker(selection: $selectedVideoItem, matching: .videos) {
                         HCenter {
-                            Text("Add")
+                            if selectedVideoItem != nil {
+                                ProgressView()
+                            } else {
+                                Text("Add")
+                            }
                         }
                     }
+                    .disabled(selectedVideoItem != nil)
                     .onChange(of: selectedVideoItem) { videoItem in
-                        selectedVideoItem = nil
                         videoItem?.loadTransferable(type: Video.self) { result in
-                            switch result {
-                            case let .success(video?):
-                                DispatchQueue.main.async {
+                            DispatchQueue.main.async {
+                                switch result {
+                                case let .success(video?):
                                     self.appendMedia(url: video.url)
+                                case .success(nil):
+                                    logger.error("media-player: Media is nil")
+                                case let .failure(error):
+                                    logger.error("media-player: Media error: \(error)")
                                 }
-                            case .success(nil):
-                                logger.error("media-player: Media is nil")
-                            case let .failure(error):
-                                logger.error("media-player: Media error: \(error)")
+                                selectedVideoItem = nil
                             }
                         }
                     }

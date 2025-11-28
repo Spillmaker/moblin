@@ -1,13 +1,15 @@
 import SwiftUI
 
 struct StreamWizardObsSettingsView: View {
-    @EnvironmentObject private var model: Model
+    @EnvironmentObject var model: Model
+    @ObservedObject var createStreamWizard: CreateStreamWizard
 
     var body: some View {
-        StreamWizardNetworkSetupObsSettingsView()
+        StreamWizardNetworkSetupObsSettingsView(createStreamWizard: createStreamWizard)
             .onAppear {
-                model.wizardPlatform = .obs
-                model.wizardName = "OBS"
+                createStreamWizard.platform = .obs
+                createStreamWizard.name = makeUniqueName(name: String(localized: "OBS"),
+                                                         existingNames: model.database.streams)
             }
     }
 }

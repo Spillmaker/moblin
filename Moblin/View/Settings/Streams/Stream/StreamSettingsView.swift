@@ -1,38 +1,147 @@
 import SwiftUI
 
+struct PlatformLogoAndNameView: View {
+    let logo: String
+    let name: String
+    var channel: String = ""
+
+    var body: some View {
+        HStack {
+            Image(logo)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 30, height: 25)
+            if channel.isEmpty {
+                Text(name)
+            } else {
+                Text(String("\(name) (\(channel))"))
+            }
+        }
+    }
+}
+
+struct TwitchLogoAndNameView: View {
+    var channel: String = ""
+
+    var body: some View {
+        PlatformLogoAndNameView(logo: "TwitchLogo", name: String(localized: "Twitch"), channel: channel)
+    }
+}
+
+struct KickLogoAndNameView: View {
+    var channel: String = ""
+
+    var body: some View {
+        PlatformLogoAndNameView(logo: "KickLogo", name: String(localized: "Kick"), channel: channel)
+    }
+}
+
+struct YouTubeLogoAndNameView: View {
+    var handle: String = ""
+
+    var body: some View {
+        PlatformLogoAndNameView(logo: "YouTubeLogo", name: String(localized: "YouTube"), channel: handle)
+    }
+}
+
+struct DLiveLogoAndNameView: View {
+    var username: String = ""
+
+    var body: some View {
+        PlatformLogoAndNameView(logo: "DLiveLogo", name: String(localized: "DLive"), channel: username)
+    }
+}
+
+struct OpenStreamingPlatformLogoAndNameView: View {
+    var body: some View {
+        PlatformLogoAndNameView(logo: "OpenStreamingPlatform", name: String(localized: "Open Streaming Platform"))
+    }
+}
+
+struct SoopLogoAndNameView: View {
+    var channel: String = ""
+
+    var body: some View {
+        PlatformLogoAndNameView(logo: "SoopLogo", name: String(localized: "SOOP"), channel: channel)
+    }
+}
+
+struct ObsLogoAndNameView: View {
+    var body: some View {
+        PlatformLogoAndNameView(logo: "ObsLogo", name: String(localized: "OBS"))
+    }
+}
+
+struct DiscordLogoAndNameView: View {
+    var body: some View {
+        PlatformLogoAndNameView(logo: "DiscordLogo", name: String(localized: "Discord"))
+    }
+}
+
+struct TtsMonsterLogoAndNameView: View {
+    var body: some View {
+        PlatformLogoAndNameView(logo: "TtsMonster", name: String(localized: "TTS.Monster"))
+    }
+}
+
 struct StreamPlatformsSettingsView: View {
-    var stream: SettingsStream
+    @ObservedObject var stream: SettingsStream
 
     var body: some View {
         NavigationLink {
             StreamTwitchSettingsView(stream: stream, loggedIn: stream.twitchLoggedIn)
         } label: {
-            Text("Twitch")
+            HStack {
+                TwitchLogoAndNameView()
+                Spacer()
+                Text(stream.twitchChannelName)
+                    .foregroundStyle(.gray)
+            }
         }
         NavigationLink {
             StreamKickSettingsView(stream: stream)
         } label: {
-            Text("Kick")
+            HStack {
+                KickLogoAndNameView()
+                Spacer()
+                Text(stream.kickChannelName)
+                    .foregroundStyle(.gray)
+            }
         }
         NavigationLink {
             StreamYouTubeSettingsView(stream: stream)
         } label: {
-            Text("YouTube")
+            HStack {
+                YouTubeLogoAndNameView()
+                Spacer()
+                Text(stream.youTubeHandle)
+                    .foregroundStyle(.gray)
+            }
         }
         NavigationLink {
-            StreamAfreecaTvSettingsView(stream: stream)
+            StreamDLiveSettingsView(stream: stream)
         } label: {
-            Text("AfreecaTV")
+            HStack {
+                DLiveLogoAndNameView()
+                Spacer()
+                Text(stream.dLiveUsername)
+                    .foregroundStyle(.gray)
+            }
+        }
+        NavigationLink {
+            StreamSoopSettingsView(stream: stream)
+        } label: {
+            HStack {
+                SoopLogoAndNameView()
+                Spacer()
+                Text(stream.soopChannelName)
+                    .foregroundStyle(.gray)
+            }
         }
         NavigationLink {
             StreamOpenStreamingPlatformSettingsView(stream: stream)
         } label: {
-            Text("Open Streaming Platform")
-        }
-        NavigationLink {
-            StreamEmotesSettingsView(stream: stream)
-        } label: {
-            Text("Emotes")
+            OpenStreamingPlatformLogoAndNameView()
         }
     }
 }
@@ -45,20 +154,13 @@ struct StreamSettingsView: View {
     var body: some View {
         Form {
             Section {
-                NavigationLink {
-                    NameEditView(name: $stream.name)
-                } label: {
-                    TextItemView(name: String(localized: "Name"), value: stream.name)
-                }
+                NameEditView(name: $stream.name, existingNames: database.streams)
             }
             Section {
                 NavigationLink {
-                    StreamUrlSettingsView(
-                        stream: stream,
-                        value: stream.url
-                    )
+                    StreamUrlSettingsView(stream: stream)
                 } label: {
-                    TextItemView(name: String(localized: "URL"), value: schemeAndAddress(url: stream.url))
+                    TextItemView(name: String(localized: "URL"), value: stream.url, sensitive: true)
                 }
                 .disabled(stream.enabled && model.isLive)
                 NavigationLink {
@@ -76,22 +178,21 @@ struct StreamSettingsView: View {
                         Text("Audio")
                     }
                     NavigationLink {
-                        StreamRecordingSettingsView(
-                            stream: stream,
-                            videoCodec: stream.recording.videoCodec.rawValue
-                        )
+                        StreamRecordingSettingsView(stream: stream, recording: stream.recording)
                     } label: {
-                        Text("Recording")
+                        IconAndTextSettingView(image: "record.circle", text: "Recording")
                     }
+                }
+                NavigationLink {
+                    StreamReplaySettingsView(stream: stream, replay: stream.replay)
+                } label: {
+                    IconAndTextSettingView(image: "play", text: "Replay")
+                }
+                if database.showAllSettings {
                     NavigationLink {
-                        StreamReplaySettingsView(stream: stream)
+                        StreamSnapshotSettingsView(stream: stream, recording: stream.recording)
                     } label: {
-                        Text("Replay")
-                    }
-                    NavigationLink {
-                        StreamSnapshotSettingsView(stream: stream)
-                    } label: {
-                        Text("Snapshot")
+                        IconAndTextSettingView(image: "camera.aperture", text: "Snapshot")
                     }
                 }
                 if isPhone() || isPad() {
@@ -109,24 +210,25 @@ struct StreamSettingsView: View {
                     }
                 }
                 if database.showAllSettings {
-                    if stream.getProtocol() == .srt {
+                    switch stream.getProtocol() {
+                    case .srt:
                         NavigationLink {
                             StreamSrtSettingsView(
+                                debug: database.debug,
                                 stream: stream,
-                                dnsLookupStrategy: stream.srt.dnsLookupStrategy!.rawValue
+                                dnsLookupStrategy: stream.srt.dnsLookupStrategy.rawValue
                             )
                         } label: {
                             Text("SRT(LA)")
                         }
-                    }
-                    if stream.getProtocol() == .rtmp {
+                    case .rtmp:
                         NavigationLink {
                             StreamRtmpSettingsView(stream: stream)
                         } label: {
                             Text("RTMP")
                         }
-                    }
-                    if stream.getProtocol() == .rist {
+                        StreamMultiStreamingSettingsView(stream: stream, multiStreaming: stream.multiStreaming)
+                    case .rist:
                         NavigationLink {
                             StreamRistSettingsView(stream: stream)
                         } label: {
@@ -146,32 +248,42 @@ struct StreamSettingsView: View {
                 NavigationLink {
                     StreamObsRemoteControlSettingsView(stream: stream)
                 } label: {
-                    Toggle("OBS remote control", isOn: Binding(get: {
-                        stream.obsWebSocketEnabled
-                    }, set: {
-                        model.setObsRemoteControlEnabled(enabled: $0)
-                    }))
+                    Toggle("OBS remote control", isOn: $stream.obsWebSocketEnabled)
+                        .onChange(of: stream.obsWebSocketEnabled) { _ in
+                            if stream.enabled {
+                                model.obsWebSocketEnabledUpdated()
+                            }
+                        }
                 }
                 if database.showAllSettings {
+                    NavigationLink {
+                        GoLiveNotificationSettingsView(stream: stream)
+                    } label: {
+                        Text("Go live notification")
+                    }
                     NavigationLink {
                         StreamRealtimeIrlSettingsView(stream: stream)
                     } label: {
                         Toggle("RealtimeIRL", isOn: Binding(get: {
                             stream.realtimeIrlEnabled
                         }, set: { value in
-                            model.setRealtimeIrlEnabled(enabled: value)
+                            stream.realtimeIrlEnabled = value
+                            if stream.enabled {
+                                model.reloadLocation()
+                            }
                         }))
                     }
                 }
+                NavigationLink {
+                    StreamEmotesSettingsView(stream: stream)
+                } label: {
+                    Text("Emotes")
+                }
             }
             if database.showAllSettings {
-                if !ProcessInfo().isiOSAppOnMac {
+                if !isMac() {
                     Section {
-                        Toggle("Background streaming", isOn: Binding(get: {
-                            stream.backgroundStreaming
-                        }, set: { value in
-                            stream.backgroundStreaming = value
-                        }))
+                        Toggle("Background streaming", isOn: $stream.backgroundStreaming)
                     } footer: {
                         Text("Live stream and record when the app is in background mode.")
                     }

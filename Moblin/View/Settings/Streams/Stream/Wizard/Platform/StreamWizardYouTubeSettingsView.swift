@@ -2,33 +2,39 @@ import SwiftUI
 
 struct StreamWizardYouTubeSettingsView: View {
     @EnvironmentObject private var model: Model
+    @ObservedObject var createStreamWizard: CreateStreamWizard
 
     var body: some View {
         Form {
             Section {
-                TextField("jo304F4gr", text: $model.wizardYouTubeVideoId)
+                TextField(String("@erimo144"), text: $createStreamWizard.youTubeHandle)
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
             } header: {
-                Text("Video id")
+                Text("Channel handle")
             } footer: {
                 Text("Only needed for chat.")
             }
             Section {
                 NavigationLink {
-                    StreamWizardNetworkSetupSettingsView(platform: String(localized: "YouTube"))
+                    StreamWizardNetworkSetupSettingsView(
+                        createStreamWizard: createStreamWizard,
+                        platform: String(localized: "YouTube")
+                    )
                 } label: {
                     WizardNextButtonView()
                 }
             }
         }
         .onAppear {
-            model.wizardPlatform = .youTube
-            model.wizardName = "YouTube"
+            createStreamWizard.platform = .youTube
+            createStreamWizard.name = makeUniqueName(name: String(localized: "YouTube"),
+                                                     existingNames: model.database.streams)
+            createStreamWizard.directIngest = "rtmp://a.rtmp.youtube.com/live2"
         }
         .navigationTitle("YouTube")
         .toolbar {
-            CreateStreamWizardToolbar()
+            CreateStreamWizardToolbar(createStreamWizard: createStreamWizard)
         }
     }
 }

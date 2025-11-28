@@ -1,9 +1,9 @@
 import MapKit
 import SwiftUI
 
-struct PrivacyRegionView: View {
+private struct PrivacyRegionView: View {
     @EnvironmentObject var model: Model
-    var region: SettingsPrivacyRegion
+    let region: SettingsPrivacyRegion
     @State var current: MKCoordinateRegion
 
     var body: some View {
@@ -23,68 +23,79 @@ struct PrivacyRegionView: View {
 
 struct LocationSettingsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var database: Database
+    @ObservedObject var location: SettingsLocation
+    @Binding var stream: SettingsStream
 
     var body: some View {
         Form {
             Section {
-                Toggle("Enabled", isOn: Binding(get: {
-                    model.database.location.enabled
-                }, set: { value in
-                    model.database.location.enabled = value
-                    model.reloadLocation()
-                }))
+                Toggle("Enabled", isOn: $location.enabled)
+                    .onChange(of: location.enabled) { _ in
+                        model.reloadLocation()
+                    }
+            }
+            if database.showAllSettings {
+                Section {
+                    Picker("Desired accuracy", selection: $location.desiredAccuracy) {
+                        ForEach(SettingsLocationDesiredAccuracy.allCases, id: \.self) { accuracy in
+                            Text(accuracy.toString())
+                        }
+                    }
+                    .onChange(of: location.desiredAccuracy) { _ in
+                        model.reloadLocation()
+                    }
+                    Picker("Distance filter", selection: $location.distanceFilter) {
+                        ForEach(SettingsLocationDistanceFilter.allCases, id: \.self) { distanceFilter in
+                            Text(distanceFilter.toString())
+                        }
+                    }
+                    .onChange(of: location.distanceFilter) { _ in
+                        model.reloadLocation()
+                    }
+                }
             }
             Section {
-                Toggle(isOn: Binding(get: {
-                    model.database.location.resetWhenGoingLive!
-                }, set: { value in
-                    model.database.location.resetWhenGoingLive = value
-                })) {
-                    Text("Reset when going live")
-                }
-                Button {
+                Toggle("Reset when going live", isOn: $location.resetWhenGoingLive)
+                TextButtonView("Reset") {
                     model.resetLocationData()
-                } label: {
-                    HCenter {
-                        Text("Reset")
-                    }
                 }
             } header: {
                 Text("Location data")
             } footer: {
                 Text("Resets distance, average speed and slope.")
             }
-            Section {
-                NavigationLink {
-                    StreamRealtimeIrlSettingsView(stream: model.stream)
-                } label: {
-                    Toggle(isOn: Binding(get: {
-                        model.stream.realtimeIrlEnabled
-                    }, set: { value in
-                        model.setRealtimeIrlEnabled(enabled: value)
-                    })) {
-                        Label("RealtimeIRL", systemImage: "dot.radiowaves.left.and.right")
+            if database.showAllSettings, stream !== fallbackStream {
+                Section {
+                    NavigationLink {
+                        StreamRealtimeIrlSettingsView(stream: stream)
+                    } label: {
+                        Toggle(isOn: $stream.realtimeIrlEnabled) {
+                            Label("RealtimeIRL", systemImage: "dot.radiowaves.left.and.right")
+                        }
+                        .onChange(of: stream.realtimeIrlEnabled) { _ in
+                            model.reloadLocation()
+                        }
                     }
+                } header: {
+                    Text("Shortcut")
                 }
-            } header: {
-                Text("Shortcut")
             }
             Section {
                 List {
-                    ForEach(model.database.location.privacyRegions) { region in
+                    ForEach(location.privacyRegions) { region in
                         PrivacyRegionView(region: region, current: MKCoordinateRegion(
-                            center: CLLocationCoordinate2D(latitude: region.latitude,
-                                                           longitude: region.longitude),
+                            center: CLLocationCoordinate2D(latitude: region.latitude, longitude: region.longitude),
                             span: MKCoordinateSpan(
                                 latitudeDelta: region.latitudeDelta,
                                 longitudeDelta: region.longitudeDelta
                             )
                         ))
                     }
-                    .onDelete(perform: { indexes in
-                        model.database.location.privacyRegions.remove(atOffsets: indexes)
+                    .onDelete { indexes in
+                        location.privacyRegions.remove(atOffsets: indexes)
                         model.reloadLocation()
-                    })
+                    }
                 }
                 CreateButtonView {
                     let privacyRegion = SettingsPrivacyRegion()
@@ -94,8 +105,7 @@ struct LocationSettingsView: View {
                         privacyRegion.latitudeDelta = 0.02
                         privacyRegion.longitudeDelta = 0.02
                     }
-                    model.database.location.privacyRegions.append(privacyRegion)
-                    model.objectWillChange.send()
+                    location.privacyRegions.append(privacyRegion)
                     model.reloadLocation()
                 }
             } header: {

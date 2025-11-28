@@ -18,19 +18,21 @@ struct MediaPlayersSettingsView: View {
             Section {
                 List {
                     ForEach(mediaPlayers.players) { player in
-                        MediaPlayerSettingsView(player: player)
+                        MediaPlayerSettingsView(mediaPlayers: mediaPlayers, player: player)
                     }
-                    .onDelete(perform: { indexes in
+                    .onDelete { indexes in
                         for index in indexes {
                             model.deleteMediaPlayer(playerId: mediaPlayers.players[index].id)
                         }
                         mediaPlayers.players.remove(atOffsets: indexes)
-                    })
+                    }
                 }
                 CreateButtonView {
-                    let settings = SettingsMediaPlayer()
-                    mediaPlayers.players.append(settings)
-                    model.addMediaPlayer(settings: settings)
+                    let mediaPlayer = SettingsMediaPlayer()
+                    mediaPlayer.name = makeUniqueName(name: SettingsMediaPlayer.baseName,
+                                                      existingNames: mediaPlayers.players)
+                    mediaPlayers.players.append(mediaPlayer)
+                    model.addMediaPlayer(settings: mediaPlayer)
                 }
             }
         }

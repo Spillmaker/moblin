@@ -2,18 +2,20 @@ import SwiftUI
 
 struct StreamWizardNetworkSetupDirectSettingsView: View {
     @EnvironmentObject private var model: Model
+    @ObservedObject var createStreamWizard: CreateStreamWizard
     @State var ingestError = ""
 
     private func nextDisabled() -> Bool {
-        return model.wizardDirectIngest.isEmpty || model.wizardDirectStreamKey.isEmpty || !ingestError.isEmpty
+        return createStreamWizard.directIngest.isEmpty || createStreamWizard.directStreamKey.isEmpty || !ingestError
+            .isEmpty
     }
 
     private func twitchStreamKeyUrl() -> String {
-        return "https://dashboard.twitch.tv/u/\(model.wizardTwitchChannelName.trim())/settings/stream"
+        return "https://dashboard.twitch.tv/u/\(createStreamWizard.twitchChannelName.trim())/settings/stream"
     }
 
     private func updateIngestError() {
-        let url = cleanUrl(url: model.wizardDirectIngest)
+        let url = cleanUrl(url: createStreamWizard.directIngest)
         if url.isEmpty {
             ingestError = ""
         } else {
@@ -23,12 +25,13 @@ struct StreamWizardNetworkSetupDirectSettingsView: View {
 
     var body: some View {
         Form {
-            if model.wizardPlatform == .twitch {
+            switch createStreamWizard.platform {
+            case .twitch:
                 Section {
-                    TextField("rtmp://arn03.contribute.live-video.net/app", text: $model.wizardDirectIngest)
+                    TextField("rtmp://arn03.contribute.live-video.net/app", text: $createStreamWizard.directIngest)
                         .textInputAutocapitalization(.never)
                         .disableAutocorrection(true)
-                        .onChange(of: model.wizardDirectIngest) { _ in
+                        .onChange(of: createStreamWizard.directIngest) { _ in
                             updateIngestError()
                         }
                 } header: {
@@ -45,7 +48,7 @@ struct StreamWizardNetworkSetupDirectSettingsView: View {
                 Section {
                     TextField(
                         "live_48950233_okF4f455GRWEF443fFr23GRbt5rEv",
-                        text: $model.wizardDirectStreamKey
+                        text: $createStreamWizard.directStreamKey
                     )
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
@@ -59,15 +62,15 @@ struct StreamWizardNetworkSetupDirectSettingsView: View {
                         Text(" (requires login).")
                     }
                 }
-            } else if model.wizardPlatform == .kick {
+            case .kick:
                 Section {
                     TextField(
                         "rtmps://fa723fc1b171.global-contribute.live-video.net",
-                        text: $model.wizardDirectIngest
+                        text: $createStreamWizard.directIngest
                     )
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
-                    .onChange(of: model.wizardDirectIngest) { _ in
+                    .onChange(of: createStreamWizard.directIngest) { _ in
                         updateIngestError()
                     }
                 } header: {
@@ -83,7 +86,7 @@ struct StreamWizardNetworkSetupDirectSettingsView: View {
                 Section {
                     TextField(
                         "sk_us-west-2_okfef49k34k_34g59gGDDHGHSREj754gYJYTJERH",
-                        text: $model.wizardDirectStreamKey
+                        text: $createStreamWizard.directStreamKey
                     )
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
@@ -94,15 +97,15 @@ struct StreamWizardNetworkSetupDirectSettingsView: View {
                         "Copy from https://kick.com/dashboard/settings/stream (requires login)."
                     )
                 }
-            } else if model.wizardPlatform == .youTube {
+            case .youTube:
                 Section {
                     TextField(
                         "rtmp://a.rtmp.youtube.com/live2",
-                        text: $model.wizardDirectIngest
+                        text: $createStreamWizard.directIngest
                     )
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
-                    .onChange(of: model.wizardDirectIngest) { _ in
+                    .onChange(of: createStreamWizard.directIngest) { _ in
                         updateIngestError()
                     }
                 } header: {
@@ -116,7 +119,7 @@ struct StreamWizardNetworkSetupDirectSettingsView: View {
                 Section {
                     TextField(
                         "4bkf-8d03-g6w3-ekjh-emdc",
-                        text: $model.wizardDirectStreamKey
+                        text: $createStreamWizard.directStreamKey
                     )
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
@@ -125,15 +128,15 @@ struct StreamWizardNetworkSetupDirectSettingsView: View {
                 } footer: {
                     Text("Copy from https://youtube.com (requires login).")
                 }
-            } else if model.wizardPlatform == .afreecaTv {
+            case .soop:
                 Section {
                     TextField(
                         "???",
-                        text: $model.wizardDirectIngest
+                        text: $createStreamWizard.directIngest
                     )
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
-                    .onChange(of: model.wizardDirectIngest) { _ in
+                    .onChange(of: createStreamWizard.directIngest) { _ in
                         updateIngestError()
                     }
                 } header: {
@@ -147,7 +150,7 @@ struct StreamWizardNetworkSetupDirectSettingsView: View {
                 Section {
                     TextField(
                         "???",
-                        text: $model.wizardDirectStreamKey
+                        text: $createStreamWizard.directStreamKey
                     )
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
@@ -156,10 +159,14 @@ struct StreamWizardNetworkSetupDirectSettingsView: View {
                 } footer: {
                     Text("Copy from ??? (requires login).")
                 }
+            case .custom:
+                EmptyView()
+            case .obs:
+                EmptyView()
             }
             Section {
                 NavigationLink {
-                    StreamWizardChatSettingsView()
+                    StreamWizardChatSettingsView(createStreamWizard: createStreamWizard)
                 } label: {
                     WizardNextButtonView()
                 }
@@ -167,12 +174,12 @@ struct StreamWizardNetworkSetupDirectSettingsView: View {
             }
         }
         .onAppear {
-            model.wizardNetworkSetup = .direct
+            createStreamWizard.networkSetup = .direct
             updateIngestError()
         }
         .navigationTitle("Direct")
         .toolbar {
-            CreateStreamWizardToolbar()
+            CreateStreamWizardToolbar(createStreamWizard: createStreamWizard)
         }
     }
 }

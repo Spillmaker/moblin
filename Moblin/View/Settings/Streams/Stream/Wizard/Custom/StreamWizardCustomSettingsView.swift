@@ -1,23 +1,24 @@
 import SwiftUI
 
 struct StreamWizardCustomSettingsView: View {
-    @EnvironmentObject private var model: Model
+    let model: Model
+    @ObservedObject var createStreamWizard: CreateStreamWizard
 
     var body: some View {
         Form {
             Section {
                 NavigationLink {
-                    StreamWizardCustomSrtSettingsView()
+                    StreamWizardCustomSrtSettingsView(createStreamWizard: createStreamWizard)
                 } label: {
                     Text("SRT(LA)")
                 }
                 NavigationLink {
-                    StreamWizardCustomRtmpSettingsView()
+                    StreamWizardCustomRtmpSettingsView(createStreamWizard: createStreamWizard)
                 } label: {
                     Text("RTMP(S)")
                 }
                 NavigationLink {
-                    StreamWizardCustomRistSettingsView()
+                    StreamWizardCustomRistSettingsView(createStreamWizard: createStreamWizard)
                 } label: {
                     Text("RIST")
                 }
@@ -26,21 +27,22 @@ struct StreamWizardCustomSettingsView: View {
             }
             Section {
                 NavigationLink {
-                    StreamWizardSummarySettingsView()
+                    StreamWizardSummarySettingsView(createStreamWizard: createStreamWizard)
                 } label: {
                     WizardSkipButtonView()
                 }
             }
         }
         .onAppear {
-            model.wizardPlatform = .custom
-            model.wizardNetworkSetup = .none
-            model.wizardCustomProtocol = .none
-            model.wizardName = "Custom"
+            createStreamWizard.platform = .custom
+            createStreamWizard.networkSetup = .none
+            createStreamWizard.customProtocol = .none
+            createStreamWizard.name = makeUniqueName(name: String(localized: "Custom"),
+                                                     existingNames: model.database.streams)
         }
         .navigationTitle("Custom")
         .toolbar {
-            CreateStreamWizardToolbar()
+            CreateStreamWizardToolbar(createStreamWizard: createStreamWizard)
         }
     }
 }

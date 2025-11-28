@@ -1,5 +1,5 @@
 // SRTLA is a bonding protocol on top of SRT.
-// Designed by rationalsa for the BELABOX projecct.
+// Designed by rationalsa for the BELABOX project.
 // https://github.com/BELABOX/srtla
 
 import Foundation
@@ -9,11 +9,13 @@ protocol SrtlaDelegate: AnyObject {
     func srtlaReady(port: UInt16)
     func srtlaError(message: String)
     func moblinkStreamerDestinationAddress(address: String, port: UInt16)
+    func srtlaReceivedPacket(packet: Data)
 }
 
 private enum State {
     case idle
     case waitForRemoteSocketConnected
+    case waitForProbe
     case waitForGroupId
     case waitForRegistered
     case waitForLocalSocketListening
@@ -48,19 +50,22 @@ class SrtlaClient: NSObject {
     private var networkInterfaces: SrtlaNetworkInterfaces
     private var connectionPriorities: [SettingsStreamSrtConnectionPriority]
     private var latestFlushDataPacketsTime = ContinuousClock.now
+    private let newSrt: Bool
 
     init(
         delegate: SrtlaDelegate,
         passThrough: Bool,
         mpegtsPacketsPerPacket: Int,
         networkInterfaceNames: [SettingsNetworkInterfaceName],
-        connectionPriorities: SettingsStreamSrtConnectionPriorities
+        connectionPriorities: SettingsStreamSrtConnectionPriorities,
+        newSrt: Bool
     ) {
         self.delegate = delegate
         self.passThrough = passThrough
         self.mpegtsPacketsPerPacket = mpegtsPacketsPerPacket
         networkInterfaces = .init()
         self.connectionPriorities = .init()
+        self.newSrt = newSrt
         super.init()
         setNetworkInterfaceNames(networkInterfaceNames: networkInterfaceNames)
         updateConnectionPriorities(connectionPriorities: connectionPriorities)
@@ -110,7 +115,7 @@ class SrtlaClient: NSObject {
             for connection in self.remoteConnections {
                 self.startRemote(connection: connection,
                                  host: NWEndpoint.Host(host),
-                                 port: NWEndpoint.Port(integerLiteral: UInt16(port)))
+                                 port: NWEndpoint.Port(integer: port))
             }
             logger.debug("srtla: Setting connect timer to \(timeout) seconds")
             self.connectTimer.startSingleShot(timeout: timeout) {
@@ -118,7 +123,7 @@ class SrtlaClient: NSObject {
                 self.onDisconnected(message: "connect timer expired")
             }
             self.state = .waitForRemoteSocketConnected
-            self.delegate?.moblinkStreamerDestinationAddress(address: host, port: UInt16(port))
+            self.delegate?.moblinkStreamerDestinationAddress(address: host, port: UInt16(clamping: port))
         }
     }
 
@@ -187,27 +192,6 @@ class SrtlaClient: NSObject {
         }
     }
 
-    private func updateConnectionPriorities(connectionPriorities: SettingsStreamSrtConnectionPriorities) {
-        self.connectionPriorities = .init()
-        guard connectionPriorities.enabled else {
-            return
-        }
-        guard let lowestPriority = connectionPriorities.priorities
-            .filter({ priority in priority.enabled! })
-            .min(by: { first, second in
-                first.priority < second.priority
-            })
-        else {
-            return
-        }
-        for connectionPriority in connectionPriorities.priorities {
-            let priority = connectionPriority.clone()
-            priority.priority -= lowestPriority.priority
-            priority.priority += 1
-            self.connectionPriorities.append(priority)
-        }
-    }
-
     func setConnectionPriorities(connectionPriorities: SettingsStreamSrtConnectionPriorities) {
         srtlaClientQueue.async {
             self.updateConnectionPriorities(connectionPriorities: connectionPriorities)
@@ -220,82 +204,6 @@ class SrtlaClient: NSObject {
                 }
             }
         }
-    }
-
-    private func getConnectionPriority(name: String) -> Float {
-        guard let priority = connectionPriorities.first(where: { connection in
-            connection.name == name
-        }) else {
-            return 1
-        }
-        if priority.enabled! {
-            return Float(priority.priority)
-        } else {
-            return 0
-        }
-    }
-
-    private func getRelayConnectionPriority(relayId: UUID) -> Float {
-        guard let priority = connectionPriorities.first(where: { priority in
-            priority.relayId == relayId
-        }) else {
-            return 1
-        }
-        if priority.enabled! {
-            return Float(priority.priority)
-        } else {
-            return 0
-        }
-    }
-
-    private func handleNetworkPathUpdate(path: NWPath) {
-        var newRemoteConnections: [RemoteConnection] = []
-        for connection in remoteConnections {
-            if let interface = connection.interface {
-                if path.availableInterfaces.contains(interface) {
-                    newRemoteConnections.append(connection)
-                } else {
-                    stopRemote(connection: connection)
-                }
-            } else {
-                newRemoteConnections.append(connection)
-            }
-        }
-        let interfaceTypes: [NWInterface.InterfaceType] = [.cellular, .wifi, .wiredEthernet]
-        for interface in path.availableInterfaces where interfaceTypes.contains(interface.type) {
-            guard !newRemoteConnections.contains(where: { connection in
-                connection.interface == interface
-            }) else {
-                continue
-            }
-            let name = interfaceName(type: interface.type, interface: interface)
-            newRemoteConnections.append(RemoteConnection(
-                type: interface.type,
-                mpegtsPacketsPerPacket: mpegtsPacketsPerPacket,
-                interface: interface,
-                networkInterfaces: networkInterfaces,
-                priority: getConnectionPriority(name: name)
-            ))
-            startRemote(connection: newRemoteConnections.last!,
-                        host: NWEndpoint.Host(host),
-                        port: NWEndpoint.Port(integerLiteral: UInt16(port)))
-            if let groupId {
-                newRemoteConnections.last!.register(groupId: groupId)
-            }
-        }
-        remoteConnections = newRemoteConnections.sorted(by: { first, second in
-            if first.type == .cellular {
-                return true
-            } else if second.type == .cellular {
-                return false
-            } else if first.type == .wifi {
-                return true
-            } else if second.type == .wifi {
-                return false
-            } else {
-                return true
-            }
-        })
     }
 
     func connectionStatistics() -> [BondingConnection] {
@@ -329,6 +237,120 @@ class SrtlaClient: NSObject {
         }
     }
 
+    func handleLocalPacket(packet: Data) {
+        guard let connection = selectRemoteConnection() else {
+            return
+        }
+        connection.sendSrtPacket(packet: packet)
+        if isSrtDataPacket(packet: packet) {
+            let now = ContinuousClock.now
+            if latestFlushDataPacketsTime.duration(to: now) > .milliseconds(15) {
+                latestFlushDataPacketsTime = now
+                for remoteConnection in remoteConnections {
+                    remoteConnection.flushDataPackets()
+                }
+            }
+        }
+        totalByteCount += Int64(packet.count)
+    }
+
+    private func updateConnectionPriorities(connectionPriorities: SettingsStreamSrtConnectionPriorities) {
+        self.connectionPriorities = .init()
+        guard connectionPriorities.enabled else {
+            return
+        }
+        guard let lowestPriority = connectionPriorities.priorities
+            .filter({ priority in priority.enabled })
+            .min(by: { first, second in
+                first.priority < second.priority
+            })
+        else {
+            return
+        }
+        for connectionPriority in connectionPriorities.priorities {
+            let priority = connectionPriority.clone()
+            priority.priority -= lowestPriority.priority
+            priority.priority += 1
+            self.connectionPriorities.append(priority)
+        }
+    }
+
+    private func getConnectionPriority(name: String) -> Float {
+        guard let priority = connectionPriorities.first(where: { connection in
+            connection.name == name
+        }) else {
+            return 1
+        }
+        if priority.enabled {
+            return Float(priority.priority)
+        } else {
+            return 0
+        }
+    }
+
+    private func getRelayConnectionPriority(relayId: UUID) -> Float {
+        guard let priority = connectionPriorities.first(where: { priority in
+            priority.relayId == relayId
+        }) else {
+            return 1
+        }
+        if priority.enabled {
+            return Float(priority.priority)
+        } else {
+            return 0
+        }
+    }
+
+    private func handleNetworkPathUpdate(path: NWPath) {
+        var newRemoteConnections: [RemoteConnection] = []
+        for connection in remoteConnections {
+            if let interface = connection.interface {
+                if path.uniqueAvailableInterfaces().contains(interface) {
+                    newRemoteConnections.append(connection)
+                } else {
+                    stopRemote(connection: connection)
+                }
+            } else {
+                newRemoteConnections.append(connection)
+            }
+        }
+        let interfaceTypes: [NWInterface.InterfaceType] = [.cellular, .wifi, .wiredEthernet]
+        for interface in path.uniqueAvailableInterfaces() where interfaceTypes.contains(interface.type) {
+            guard !newRemoteConnections.contains(where: { connection in
+                connection.interface == interface
+            }) else {
+                continue
+            }
+            let name = interfaceName(type: interface.type, interface: interface)
+            newRemoteConnections.append(RemoteConnection(
+                type: interface.type,
+                mpegtsPacketsPerPacket: mpegtsPacketsPerPacket,
+                interface: interface,
+                networkInterfaces: networkInterfaces,
+                priority: getConnectionPriority(name: name)
+            ))
+            startRemote(connection: newRemoteConnections.last!,
+                        host: NWEndpoint.Host(host),
+                        port: NWEndpoint.Port(integer: port))
+            if let groupId {
+                newRemoteConnections.last!.register(groupId: groupId)
+            }
+        }
+        remoteConnections = newRemoteConnections.sorted(by: { first, second in
+            if first.type == .cellular {
+                return true
+            } else if second.type == .cellular {
+                return false
+            } else if first.type == .wifi {
+                return true
+            } else if second.type == .wifi {
+                return false
+            } else {
+                return true
+            }
+        })
+    }
+
     private func startRemote(connection: RemoteConnection, host: NWEndpoint.Host, port: NWEndpoint.Port) {
         connection.delegate = self
         connection.start(host: host, port: port)
@@ -340,6 +362,20 @@ class SrtlaClient: NSObject {
     }
 
     private func startListener() {
+        if newSrt {
+            startListenerNew()
+        } else {
+            startListenerOld()
+        }
+    }
+
+    private func startListenerNew() {
+        state = .running
+        delegate?.srtlaReady(port: 0)
+        cancelConnectTimer()
+    }
+
+    private func startListenerOld() {
         guard localListener == nil else {
             return
         }
@@ -383,25 +419,6 @@ class SrtlaClient: NSObject {
         state = .idle
     }
 
-    func handleLocalPacket(packet: Data) {
-        guard let connection = selectRemoteConnection() else {
-            return
-        }
-        connection.sendSrtPacket(packet: packet)
-        if srtlaBatchSend {
-            if isSrtDataPacket(packet: packet) {
-                let now = ContinuousClock.now
-                if latestFlushDataPacketsTime.duration(to: now) > .milliseconds(25) {
-                    latestFlushDataPacketsTime = now
-                    for remoteConnection in remoteConnections {
-                        remoteConnection.flushDataPackets()
-                    }
-                }
-            }
-        }
-        totalByteCount += Int64(packet.count)
-    }
-
     private func selectRemoteConnection() -> RemoteConnection? {
         var selectedConnection: RemoteConnection?
         var selectedScore = -1
@@ -418,15 +435,23 @@ class SrtlaClient: NSObject {
 
 extension SrtlaClient: RemoteConnectionDelegate {
     func remoteConnectionOnSocketConnected(connection: RemoteConnection) {
-        guard state == .waitForRemoteSocketConnected else {
+        guard state == .waitForRemoteSocketConnected || state == .waitForProbe else {
             return
         }
         if passThrough {
             startListener()
         } else {
-            connection.sendSrtlaReg1()
-            state = .waitForGroupId
+            connection.probe()
+            state = .waitForProbe
         }
+    }
+
+    func remoteConnectionOnRegNgp(connection: RemoteConnection) {
+        guard state == .waitForProbe else {
+            return
+        }
+        connection.sendSrtlaReg1()
+        state = .waitForGroupId
     }
 
     func remoteConnectionOnReg2(groupId: Data) {
@@ -448,7 +473,11 @@ extension SrtlaClient: RemoteConnectionDelegate {
     }
 
     func remoteConnectionPacketHandler(packet: Data) {
-        localListener?.sendPacket(packet: packet)
+        if newSrt {
+            delegate?.srtlaReceivedPacket(packet: packet)
+        } else {
+            localListener?.sendPacket(packet: packet)
+        }
         totalByteCount += Int64(packet.count)
     }
 

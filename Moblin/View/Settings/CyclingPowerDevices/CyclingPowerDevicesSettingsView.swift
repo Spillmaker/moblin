@@ -1,20 +1,8 @@
 import SwiftUI
 
-private struct CyclingPowerDeviceSettingsWrapperView: View {
-    var device: SettingsCyclingPowerDevice
-    @State var name: String
-
-    var body: some View {
-        NavigationLink {
-            CyclingPowerDeviceSettingsView(device: device, name: $name)
-        } label: {
-            Text(name)
-        }
-    }
-}
-
 struct CyclingPowerDevicesSettingsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var cyclingPowerDevices: SettingsCyclingPowerDevices
 
     var body: some View {
         Form {
@@ -25,18 +13,21 @@ struct CyclingPowerDevicesSettingsView: View {
             }
             Section {
                 List {
-                    ForEach(model.database.cyclingPowerDevices.devices) { device in
-                        CyclingPowerDeviceSettingsWrapperView(device: device, name: device.name)
+                    ForEach(cyclingPowerDevices.devices) { device in
+                        CyclingPowerDeviceSettingsView(model: model,
+                                                       cyclingPowerDevices: cyclingPowerDevices,
+                                                       device: device,
+                                                       status: model.statusTopRight)
                     }
-                    .onDelete(perform: { offsets in
-                        model.database.cyclingPowerDevices.devices.remove(atOffsets: offsets)
-                    })
+                    .onDelete { offsets in
+                        cyclingPowerDevices.devices.remove(atOffsets: offsets)
+                    }
                 }
                 CreateButtonView {
                     let device = SettingsCyclingPowerDevice()
-                    device.name = "My device"
-                    model.database.cyclingPowerDevices.devices.append(device)
-                    model.objectWillChange.send()
+                    device.name = makeUniqueName(name: SettingsCyclingPowerDevice.baseName,
+                                                 existingNames: cyclingPowerDevices.devices)
+                    cyclingPowerDevices.devices.append(device)
                 }
             } footer: {
                 SwipeLeftToDeleteHelpView(kind: String(localized: "a device"))

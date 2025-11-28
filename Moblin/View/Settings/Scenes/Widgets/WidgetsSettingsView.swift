@@ -1,18 +1,41 @@
 import SwiftUI
 
+private class SceneItem: ObservableObject, Identifiable {
+    var id: UUID {
+        scene.id
+    }
+
+    let scene: SettingsScene
+    @Published var enabled: Bool
+
+    init(scene: SettingsScene) {
+        self.scene = scene
+        enabled = false
+    }
+}
+
+private struct SceneItemView: View {
+    @Binding var scene: SceneItem
+
+    var body: some View {
+        Toggle(scene.scene.name, isOn: $scene.enabled)
+    }
+}
+
 private struct WidgetsSettingsItemView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var database: Database
     @ObservedObject var widget: SettingsWidget
 
     var body: some View {
         NavigationLink {
-            WidgetSettingsView(widget: widget)
+            WidgetSettingsView(database: database, widget: widget)
         } label: {
             Toggle(isOn: $widget.enabled) {
                 HStack {
                     DraggableItemPrefixView()
                     IconAndTextView(
-                        image: widgetImage(widget: widget),
+                        image: widget.image(),
                         text: widget.name,
                         longDivider: true
                     )
@@ -29,23 +52,32 @@ private struct WidgetsSettingsItemView: View {
 struct WidgetsSettingsView: View {
     @EnvironmentObject var model: Model
     @ObservedObject var database: Database
+    @State var presentingCreateWizard: Bool = false
 
     var body: some View {
         Section {
             ForEach(database.widgets) { widget in
-                WidgetsSettingsItemView(widget: widget)
+                WidgetsSettingsItemView(database: database, widget: widget)
             }
-            .onMove(perform: { froms, to in
+            .onMove { froms, to in
                 database.widgets.move(fromOffsets: froms, toOffset: to)
-            })
-            .onDelete(perform: { offsets in
+            }
+            .onDelete { offsets in
                 database.widgets.remove(atOffsets: offsets)
                 model.removeDeadWidgetsFromScenes()
                 model.resetSelectedScene()
-            })
+            }
             CreateButtonView {
-                database.widgets.append(SettingsWidget(name: String(localized: "My widget")))
-                model.fixAlertMedias()
+                presentingCreateWizard = true
+                model.createWidgetWizard.reset()
+            }
+            .sheet(isPresented: $presentingCreateWizard) {
+                NavigationStack {
+                    WidgetWizardSettingsView(model: model,
+                                             database: database,
+                                             createWidgetWizard: model.createWidgetWizard,
+                                             presentingCreateWizard: $presentingCreateWizard)
+                }
             }
         } header: {
             Text("Widgets")

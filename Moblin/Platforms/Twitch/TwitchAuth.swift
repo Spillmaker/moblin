@@ -8,6 +8,8 @@ private let scopes = [
     "user:read:chat",
     "user:write:chat",
     "moderator:read:followers",
+    "moderator:manage:chat_messages",
+    "moderator:manage:banned_users",
     "channel:read:subscriptions",
     "channel:read:redemptions",
     "channel:read:stream_key",
@@ -36,7 +38,7 @@ class TwitchAuth: NSObject {
 
     func getWebBrowser() -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = WKWebsiteDataStore.nonPersistent()
+        configuration.websiteDataStore = .nonPersistent()
         webBrowser = WKWebView(frame: .zero, configuration: configuration)
         webBrowser!.navigationDelegate = self
         webBrowser!.load(URLRequest(url: buildAuthUrl()!))

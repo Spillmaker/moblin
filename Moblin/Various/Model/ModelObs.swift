@@ -6,35 +6,54 @@ struct ObsSceneInput: Identifiable {
     var muted: Bool?
 }
 
-extension Model {
+class QuickButtonObs: ObservableObject {
+    var sourceFetchScreenshot = false
+    var sourceScreenshotIsFetching = false
+    var recording = false
+    var audioVolumeLatest: String = ""
+    var sceneBeforeSwitchToBrbScene: String?
+    @Published var streamingState: ObsOutputState = .stopped
+    @Published var recordingState: ObsOutputState = .stopped
+    @Published var sceneInputs: [ObsSceneInput] = []
+    @Published var audioVolume: String = noValue
+    @Published var currentScenePicker: String = ""
+    @Published var currentScene: String = ""
+    @Published var scenes: [String] = []
+    @Published var screenshot: CGImage?
+    @Published var streaming = false
+    @Published var fixOngoing = false
+    @Published var audioDelay: Int = 0
+
     func startObsSourceScreenshot() {
-        obsScreenshot = nil
-        obsSourceFetchScreenshot = true
-        obsSourceScreenshotIsFetching = false
+        screenshot = nil
+        sourceFetchScreenshot = true
+        sourceScreenshotIsFetching = false
     }
 
     func stopObsSourceScreenshot() {
-        obsSourceFetchScreenshot = false
+        sourceFetchScreenshot = false
     }
+}
 
+extension Model {
     func updateObsSourceScreenshot() {
-        guard obsSourceFetchScreenshot else {
+        guard obsQuickButton.sourceFetchScreenshot else {
             return
         }
-        guard !obsSourceScreenshotIsFetching else {
+        guard !obsQuickButton.sourceScreenshotIsFetching else {
             return
         }
-        guard !obsCurrentScene.isEmpty else {
+        guard !obsQuickButton.currentScene.isEmpty else {
             return
         }
-        obsWebSocket?.getSourceScreenshot(name: obsCurrentScene, onSuccess: { data in
+        obsWebSocket?.getSourceScreenshot(name: obsQuickButton.currentScene, onSuccess: { data in
             let screenshot = UIImage(data: data)?.cgImage
-            self.obsScreenshot = screenshot
-            self.obsSourceScreenshotIsFetching = false
+            self.obsQuickButton.screenshot = screenshot
+            self.obsQuickButton.sourceScreenshotIsFetching = false
         }, onError: { message in
             logger.debug("Failed to update screenshot with error \(message)")
-            self.obsScreenshot = nil
-            self.obsSourceScreenshotIsFetching = false
+            self.obsQuickButton.screenshot = nil
+            self.obsQuickButton.sourceScreenshotIsFetching = false
         })
     }
 
@@ -56,7 +75,7 @@ extension Model {
         }
         obsWebSocket?.getInputAudioSyncOffset(name: stream.obsSourceName, onSuccess: { offset in
             DispatchQueue.main.async {
-                self.obsAudioDelay = offset
+                self.obsQuickButton.audioDelay = offset
             }
         }, onError: { _ in
         })
@@ -72,12 +91,13 @@ extension Model {
 
     func listObsScenes(updateAudioInputs: Bool = false) {
         obsWebSocket?.getSceneList(onSuccess: { list in
-            self.obsCurrentScenePicker = list.current
-            self.obsCurrentScene = list.current
-            self.obsScenes = list.scenes
+            self.obsQuickButton.currentScenePicker = list.current
+            self.obsQuickButton.currentScene = list.current
+            self.obsQuickButton.scenes = list.scenes
             if updateAudioInputs {
                 self.updateObsAudioInputs(sceneName: list.current)
             }
+            self.updateStatusObsText()
         }, onError: { _ in
         })
     }
@@ -87,7 +107,7 @@ extension Model {
             self.obsWebSocket?.getSpecialInputs { specialInputs in
                 self.obsWebSocket?.getSceneItemList(sceneName: sceneName, onSuccess: { sceneItems in
                     guard !sceneItems.isEmpty else {
-                        self.obsSceneInputs = []
+                        self.obsQuickButton.sceneInputs = []
                         return
                     }
                     var obsSceneInputs: [ObsSceneInput] = []
@@ -104,31 +124,31 @@ extension Model {
                         inputNames: obsSceneInputs.map { $0.name },
                         onSuccess: { muteds in
                             guard muteds.count == obsSceneInputs.count else {
-                                self.obsSceneInputs = []
+                                self.obsQuickButton.sceneInputs = []
                                 return
                             }
                             for (i, muted) in muteds.enumerated() {
                                 obsSceneInputs[i].muted = muted
                             }
-                            self.obsSceneInputs = obsSceneInputs
+                            self.obsQuickButton.sceneInputs = obsSceneInputs
                         }, onError: { _ in
-                            self.obsSceneInputs = []
+                            self.obsQuickButton.sceneInputs = []
                         }
                     )
                 }, onError: { _ in
-                    self.obsSceneInputs = []
+                    self.obsQuickButton.sceneInputs = []
                 })
             } onError: { _ in
-                self.obsSceneInputs = []
+                self.obsQuickButton.sceneInputs = []
             }
         } onError: { _ in
-            self.obsSceneInputs = []
+            self.obsQuickButton.sceneInputs = []
         }
     }
 
     func setObsScene(name: String) {
         obsWebSocket?.setCurrentProgramScene(name: name, onSuccess: {
-            self.obsCurrentScene = name
+            self.obsQuickButton.currentScene = name
             self.updateObsAudioInputs(sceneName: name)
         }, onError: { message in
             self.makeErrorToast(title: String(localized: "Failed to set OBS scene to \(name)"),
@@ -138,7 +158,7 @@ extension Model {
 
     func updateObsStatus() {
         guard isObsConnected() else {
-            obsAudioVolumeLatest = noValue
+            obsQuickButton.audioVolumeLatest = noValue
             return
         }
         obsWebSocket?.getStreamStatus(onSuccess: { state in
@@ -168,22 +188,22 @@ extension Model {
         if let streamBecameBrokenTime {
             if streamBecameBrokenTime.duration(to: now) < .seconds(15) {
                 return true
-            } else if obsCurrentScene != stream.obsBrbScene {
+            } else if obsQuickButton.currentScene != stream.obsBrbScene {
                 return true
             }
         }
         if stream.obsBrbSceneVideoSourceBroken, let scene = getSelectedScene() {
-            switch scene.cameraPosition {
+            switch scene.videoSource.cameraPosition {
             case .srtla:
-                if let srtlaStream = getSrtlaStream(id: scene.srtlaCameraId) {
-                    if srtlaServer?.isStreamConnected(streamId: srtlaStream.streamId) == false {
+                if let srtlaStream = getSrtlaStream(id: scene.videoSource.srtlaCameraId) {
+                    if ingests.srtla?.isStreamConnected(streamId: srtlaStream.streamId) == false {
                         streamBecameBrokenTime = now
                         return true
                     }
                 }
             case .rtmp:
-                if let rtmpStream = getRtmpStream(id: scene.rtmpCameraId) {
-                    if rtmpServer?.isStreamConnected(streamKey: rtmpStream.streamKey) == false {
+                if let rtmpStream = getRtmpStream(id: scene.videoSource.rtmpCameraId) {
+                    if ingests.rtmp?.isStreamConnected(streamKey: rtmpStream.streamKey) == false {
                         streamBecameBrokenTime = now
                         return true
                     }
@@ -197,25 +217,25 @@ extension Model {
     }
 
     func updateObsSceneSwitcher(now: ContinuousClock.Instant) {
-        guard isLive, !stream.obsBrbScene.isEmpty, !obsCurrentScene.isEmpty, isObsConnected() else {
+        guard isLive, !stream.obsBrbScene.isEmpty, !obsQuickButton.currentScene.isEmpty, isObsConnected() else {
             return
         }
         if isStreamLikelyBroken(now: now) {
-            if obsCurrentScene != stream.obsBrbScene {
+            if obsQuickButton.currentScene != stream.obsBrbScene {
                 if !stream.obsMainScene.isEmpty {
-                    obsSceneBeforeSwitchToBrbScene = stream.obsMainScene
+                    obsQuickButton.sceneBeforeSwitchToBrbScene = stream.obsMainScene
                 } else {
-                    obsSceneBeforeSwitchToBrbScene = obsCurrentScene
+                    obsQuickButton.sceneBeforeSwitchToBrbScene = obsQuickButton.currentScene
                 }
                 makeStreamLikelyBrokenToast(scene: stream.obsBrbScene)
                 setObsScene(name: stream.obsBrbScene)
             }
-        } else if let obsSceneBeforeSwitchToBrbScene {
-            if obsCurrentScene == stream.obsBrbScene {
+        } else if let obsSceneBeforeSwitchToBrbScene = obsQuickButton.sceneBeforeSwitchToBrbScene {
+            if obsQuickButton.currentScene == stream.obsBrbScene {
                 makeStreamLikelyWorkingToast(scene: obsSceneBeforeSwitchToBrbScene)
                 setObsScene(name: obsSceneBeforeSwitchToBrbScene)
-            } else if obsCurrentScene == obsSceneBeforeSwitchToBrbScene {
-                self.obsSceneBeforeSwitchToBrbScene = nil
+            } else if obsQuickButton.currentScene == obsSceneBeforeSwitchToBrbScene {
+                obsQuickButton.sceneBeforeSwitchToBrbScene = nil
             }
         }
     }
@@ -249,13 +269,6 @@ extension Model {
             delegate: self
         )
         obsWebSocket!.start()
-    }
-
-    func setObsRemoteControlEnabled(enabled: Bool) {
-        stream.obsWebSocketEnabled = enabled
-        if stream.enabled {
-            obsWebSocketEnabledUpdated()
-        }
     }
 
     func obsWebSocketEnabledUpdated() {
@@ -310,12 +323,12 @@ extension Model {
         guard let obsWebSocket else {
             return
         }
-        obsFixOngoing = true
+        obsQuickButton.fixOngoing = true
         obsWebSocket.setInputSettings(inputName: stream.obsSourceName,
                                       onSuccess: {
-                                          self.obsFixOngoing = false
+                                          self.obsQuickButton.fixOngoing = false
                                       }, onError: { message in
-                                          self.obsFixOngoing = false
+                                          self.obsQuickButton.fixOngoing = false
                                           DispatchQueue.main.async {
                                               self.makeErrorToast(
                                                   title: String(localized: "Failed to fix OBS input"),
@@ -336,7 +349,7 @@ extension Model {
     }
 
     func startObsAudioVolume() {
-        obsAudioVolumeLatest = noValue
+        obsQuickButton.audioVolumeLatest = noValue
         obsWebSocket?.startAudioVolume()
     }
 
@@ -345,8 +358,8 @@ extension Model {
     }
 
     func updateObsAudioVolume() {
-        if obsAudioVolumeLatest != obsAudioVolume {
-            obsAudioVolume = obsAudioVolumeLatest
+        if obsQuickButton.audioVolumeLatest != obsQuickButton.audioVolume {
+            obsQuickButton.audioVolume = obsQuickButton.audioVolumeLatest
         }
     }
 
@@ -354,22 +367,26 @@ extension Model {
         return database.show.obsStatus && isObsRemoteControlConfigured()
     }
 
-    func statusObsText() -> String {
+    private func statusObsText() -> String {
         if !isObsRemoteControlConfigured() {
             return String(localized: "Not configured")
         } else if isObsConnected() {
-            if obsStreaming && obsRecording {
-                return "\(obsCurrentScene) (Streaming, Recording)"
-            } else if obsStreaming {
-                return "\(obsCurrentScene) (Streaming)"
-            } else if obsRecording {
-                return "\(obsCurrentScene) (Recording)"
+            if obsQuickButton.streaming && obsQuickButton.recording {
+                return "\(obsQuickButton.currentScene) (Streaming, Recording)"
+            } else if obsQuickButton.streaming {
+                return "\(obsQuickButton.currentScene) (Streaming)"
+            } else if obsQuickButton.recording {
+                return "\(obsQuickButton.currentScene) (Recording)"
             } else {
-                return obsCurrentScene
+                return obsQuickButton.currentScene
             }
         } else {
             return obsConnectionErrorMessage()
         }
+    }
+
+    func updateStatusObsText() {
+        statusTopLeft.statusObsText = statusObsText()
     }
 
     func isObsRemoteControlConfigured() -> Bool {
@@ -380,51 +397,56 @@ extension Model {
 extension Model: ObsWebsocketDelegate {
     func obsWebsocketConnected() {
         updateObsStatus()
+        updateStatusObsText()
     }
 
     func obsWebsocketSceneChanged(sceneName: String) {
-        obsCurrentScenePicker = sceneName
-        obsCurrentScene = sceneName
+        obsQuickButton.currentScenePicker = sceneName
+        obsQuickButton.currentScene = sceneName
         updateObsAudioInputs(sceneName: sceneName)
+        updateStatusObsText()
     }
 
     func obsWebsocketInputMuteStateChangedEvent(inputName: String, muted: Bool) {
-        obsSceneInputs = obsSceneInputs.map { input in
+        obsQuickButton.sceneInputs = obsQuickButton.sceneInputs.map { input in
             var input = input
             if input.name == inputName {
                 input.muted = muted
             }
             return input
         }
+        updateStatusObsText()
     }
 
     func obsWebsocketStreamStatusChanged(active: Bool, state: ObsOutputState?) {
-        obsStreaming = active
+        obsQuickButton.streaming = active
         if let state {
-            obsStreamingState = state
+            obsQuickButton.streamingState = state
         } else if active {
-            obsStreamingState = .started
+            obsQuickButton.streamingState = .started
         } else {
-            obsStreamingState = .stopped
+            obsQuickButton.streamingState = .stopped
         }
+        updateStatusObsText()
     }
 
     func obsWebsocketRecordStatusChanged(active: Bool, state: ObsOutputState?) {
-        obsRecording = active
+        obsQuickButton.recording = active
         if let state {
-            obsRecordingState = state
+            obsQuickButton.recordingState = state
         } else if active {
-            obsRecordingState = .started
+            obsQuickButton.recordingState = .started
         } else {
-            obsRecordingState = .stopped
+            obsQuickButton.recordingState = .stopped
         }
+        updateStatusObsText()
     }
 
     func obsWebsocketAudioVolume(volumes: [ObsAudioInputVolume]) {
         guard let volume = volumes.first(where: { volume in
             volume.name == self.stream.obsSourceName
         }) else {
-            obsAudioVolumeLatest =
+            obsQuickButton.audioVolumeLatest =
                 String(localized: "Source \(stream.obsSourceName) not found")
             return
         }
@@ -436,6 +458,6 @@ extension Model: ObsWebsocketDelegate {
                 values.append(String(localized: "\(formatOneDecimal(volume)) dB"))
             }
         }
-        obsAudioVolumeLatest = values.joined(separator: ", ")
+        obsQuickButton.audioVolumeLatest = values.joined(separator: ", ")
     }
 }

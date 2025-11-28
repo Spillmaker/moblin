@@ -3,7 +3,7 @@ import GameController
 extension Model {
     private func handleGameControllerButtonZoom(pressed: Bool, x: Float) {
         if pressed {
-            setZoomX(x: x, rate: database.zoom.speed!)
+            setZoomX(x: x, rate: database.zoom.speed)
         } else {
             if let x = stopCameraZoom() {
                 setZoomXWhenInRange(x: x)
@@ -63,7 +63,7 @@ extension Model {
             }
         case .blackScreen:
             if !pressed {
-                toggleBlackScreen()
+                toggleStealthMode()
                 updateQuickButtonStates()
             }
         case .chat:
@@ -94,7 +94,7 @@ extension Model {
     }
 
     private func updateGameControllers() {
-        gameControllersTotal = String(numberOfGameControllers())
+        statusTopRight.gameControllersTotal = String(numberOfGameControllers())
     }
 
     private func gameControllerNumber(gameController: GCController) -> Int? {

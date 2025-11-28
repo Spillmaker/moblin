@@ -1,6 +1,15 @@
 import AVFoundation
 
-private let extendedVideoHeader: UInt8 = 0b1000_0000
+let extendedVideoHeader: UInt8 = 0b1000_0000
+
+private func calcVideoCompositionTime(_ sampleBuffer: CMSampleBuffer) -> Int32 {
+    let decodeTimeStamp = sampleBuffer.decodeTimeStamp
+    guard decodeTimeStamp.isValid else {
+        return 0
+    }
+    let presentationTimeStamp = sampleBuffer.presentationTimeStamp
+    return Int32((presentationTimeStamp.seconds - decodeTimeStamp.seconds) * 1000)
+}
 
 private func makeVideoHeader(_ frameType: FlvFrameType,
                              _ fourCc: FlvVideoFourCC,
@@ -34,46 +43,42 @@ private func makeHevcExtendedTagHeader(_ frameType: FlvFrameType, _ packetType: 
     return makeVideoHeader(frameType, .hevc, 0, .nal, packetType)
 }
 
-enum RtmpStreamCode: String {
-    case publishStart = "NetStream.Publish.Start"
-    case videoDimensionChange = "NetStream.Video.DimensionChange"
+protocol RtmpStreamDelegate: AnyObject {
+    func rtmpStreamStatus(_ rtmpStream: RtmpStream, code: String)
 }
 
-class RtmpStream: NetStream {
-    enum ReadyState: UInt8 {
+enum RtmpStreamCode: String {
+    case publishStart = "NetStream.Publish.Start"
+}
+
+private let aac = FlvAudioCodec.aac.rawValue << 4
+    | FlvSoundRate.kHz44.rawValue << 2
+    | FlvSoundSize.snd16bit.rawValue << 1
+    | FlvSoundType.stereo.rawValue
+
+private let opus = FlvAudioCodec.exHeader.rawValue << 4
+    | FlvOpusPacketType.sequenceStart.rawValue
+
+class RtmpStream {
+    enum State: UInt8 {
         case initialized
         case open
         case publish
         case publishing
     }
 
-    static let defaultID: UInt32 = 0
     var info = RtmpStreamInfo()
-
-    var id = RtmpStream.defaultID
-    private var readyState: ReadyState = .initialized
-
-    func setReadyState(state: ReadyState) {
-        guard state != readyState else {
-            return
-        }
-        let oldState = readyState
-        readyState = state
-        logger.info("rtmp: Settings stream state \(oldState) -> \(state)")
-        didChangeReadyState(state, oldReadyState: oldState)
-    }
-
-    static let aac = FlvAudioCodec.aac.rawValue << 4 | FlvSoundRate.kHz44.rawValue << 2 | FlvSoundSize
-        .snd16bit.rawValue << 1 | FlvSoundType.stereo.rawValue
-
+    var id: UInt32 = 0
+    private var state: State = .initialized
     private var messages: [RtmpCommandMessage] = []
     private var startedAt = Date()
-    private var dispatcher: (any RtmpEventDispatcherConvertible)!
     private var audioChunkType: RtmpChunkType = .zero
     private var videoChunkType: RtmpChunkType = .zero
     private var dataTimeStamps: [String: Date] = [:]
-    private weak var rtmpConnection: RtmpConnection?
+    private let connection: RtmpConnection
     private var streamKey = ""
+    private var url: String = ""
+    let name: String
 
     // Outbound
     private var baseTimeStamp = -1.0
@@ -81,62 +86,77 @@ class RtmpStream: NetStream {
     private var videoTimeStampDelta = 0.0
     private var prevRebasedAudioTimeStamp = -1.0
     private var prevRebasedVideoTimeStamp = -1.0
-    private let compositionTimeOffset = CMTime(value: 3, timescale: 30).seconds
+    private let processor: Processor
+    weak var delegate: RtmpStreamDelegate?
 
-    init(connection: RtmpConnection) {
-        rtmpConnection = connection
-        super.init()
-        dispatcher = RtmpEventDispatcher(target: self)
-        connection.streams.append(self)
-        addEventListener(.rtmpStatus, selector: #selector(on(status:)), observer: self)
-        connection.addEventListener(.rtmpStatus, selector: #selector(on(status:)), observer: self)
-        if connection.connected {
-            sendFCPublish()
-            connection.createStream(self)
+    init(name: String, processor: Processor, delegate: RtmpStreamDelegate) {
+        self.name = name
+        self.processor = processor
+        self.delegate = delegate
+        connection = RtmpConnection(name: name)
+        connection.stream = self
+    }
+
+    func setState(state: State) {
+        guard self.state != state else {
+            return
+        }
+        let oldState = self.state
+        self.state = state
+        logger.info("rtmp: \(name): Stream state \(oldState) -> \(state)")
+        if oldState == .publishing {
+            sendFCUnpublish()
+            sendDeleteStream()
+            closeStream()
+            processor.stopEncoding(self)
+        }
+        switch state {
+        case .open:
+            handleStateChangeToOpen()
+        case .publish:
+            handleStateChangeToPublish()
+        case .publishing:
+            handleStateChangeToPublishing()
+        default:
+            break
         }
     }
 
-    deinit {
-        mixer.stopRunning()
-        removeEventListener(.rtmpStatus, selector: #selector(on(status:)), observer: self)
-        rtmpConnection?.removeEventListener(.rtmpStatus, selector: #selector(on(status:)), observer: self)
+    func setUrl(_ url: String) {
+        streamKey = makeRtmpStreamKey(url: url)
+        self.url = makeRtmpUri(url: url)
     }
 
-    func setStreamKey(_ streamKey: String) {
-        self.streamKey = streamKey
+    func connect() {
+        processorControlQueue.async {
+            self.connection.connect(self.url)
+        }
+    }
+
+    func disconnect() {
+        processorControlQueue.async {
+            self.connection.disconnect()
+        }
+    }
+
+    func reconnectSoon() {
+        processorControlQueue.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self else {
+                return
+            }
+            self.connection.connect(self.url)
+        }
     }
 
     func publish() {
-        netStreamLockQueue.async {
+        processorControlQueue.async {
             self.publishInner()
         }
     }
 
     func close() {
-        netStreamLockQueue.async {
+        processorControlQueue.async {
             self.closeInternal()
-        }
-    }
-
-    private func publishInner() {
-        guard let rtmpConnection else {
-            return
-        }
-        info.resourceName = streamKey
-        let message = RtmpCommandMessage(
-            streamId: id,
-            transactionId: rtmpConnection.getNextTransactionId(),
-            objectEncoding: .amf0,
-            commandName: "publish",
-            commandObject: nil,
-            arguments: [streamKey, "live"]
-        )
-        switch readyState {
-        case .initialized:
-            messages.append(message)
-        default:
-            setReadyState(state: .publish)
-            _ = rtmpConnection.socket.write(chunk: RtmpChunk(message: message))
         }
     }
 
@@ -144,8 +164,52 @@ class RtmpStream: NetStream {
         info.onTimeout()
     }
 
+    func closeInternal() {
+        setState(state: .initialized)
+        processor.stopEncoding(self)
+    }
+
+    func onInternal(data: AsObject) {
+        guard let code = data["code"] as? String else {
+            return
+        }
+        delegate?.rtmpStreamStatus(self, code: code)
+        switch code {
+        case RtmpConnectionCode.connectSuccess.rawValue:
+            setState(state: .initialized)
+            sendReleaseStream()
+            sendFCPublish()
+            connection.createStream(self)
+        case RtmpStreamCode.publishStart.rawValue:
+            if state != .initialized {
+                setState(state: .publishing)
+            }
+        default:
+            break
+        }
+    }
+
+    private func publishInner() {
+        info.resourceName = streamKey
+        let message = RtmpCommandMessage(
+            streamId: id,
+            transactionId: connection.getNextTransactionId(),
+            commandType: .amf0Command,
+            commandName: "publish",
+            commandObject: nil,
+            arguments: [streamKey, "live"]
+        )
+        switch state {
+        case .initialized:
+            messages.append(message)
+        default:
+            setState(state: .publish)
+            _ = connection.socket.write(chunk: RtmpChunk(message: message))
+        }
+    }
+
     private func send(handlerName: String, arguments: Any?...) {
-        guard let rtmpConnection = rtmpConnection, readyState == .publishing else {
+        guard state == .publishing else {
             return
         }
         let dataWasSent = dataTimeStamps[handlerName] != nil
@@ -157,25 +221,21 @@ class RtmpStream: NetStream {
             chunkStreamId: RtmpChunk.ChunkStreamId.data.rawValue,
             message: RtmpDataMessage(
                 streamId: id,
-                objectEncoding: .amf0,
+                dataType: .amf0Data,
                 timestamp: timestmap,
                 handlerName: handlerName,
                 arguments: arguments
             )
         )
-        let length = rtmpConnection.socket.write(chunk: chunk)
+        let length = connection.socket.write(chunk: chunk)
         dataTimeStamps[handlerName] = .init()
         info.byteCount.mutate { $0 += Int64(length) }
     }
 
     private func createOnMetaData() -> AsObject {
-        let audioEncoders = mixer.audio.getEncoders()
-        let videoEncoders = mixer.video.getEncoders()
-        if audioEncoders.count == 1, videoEncoders.count == 1 {
-            return createOnMetaDataLegacy(audioEncoders.first!, videoEncoders.first!)
-        } else {
-            return createOnMetaDataMultiTrack(audioEncoders, videoEncoders)
-        }
+        let audioEncoder = processor.getAudioEncoder()
+        let videoEncoder = processor.getVideoEncoder()
+        return createOnMetaDataLegacy(audioEncoder, videoEncoder)
     }
 
     private func createOnMetaDataLegacy(_ audioEncoder: AudioEncoder, _ videoEncoder: VideoEncoder) -> AsObject {
@@ -183,7 +243,7 @@ class RtmpStream: NetStream {
         let settings = videoEncoder.settings.value
         metadata["width"] = settings.videoSize.width
         metadata["height"] = settings.videoSize.height
-        metadata["framerate"] = mixer.video.frameRate
+        metadata["framerate"] = processor.getFps()
         switch settings.format {
         case .h264:
             metadata["videocodecid"] = FlvVideoCodec.avc.rawValue
@@ -192,83 +252,30 @@ class RtmpStream: NetStream {
         }
         metadata["videodatarate"] = settings.bitRate / 1000
         metadata["audiocodecid"] = FlvAudioCodec.aac.rawValue
-        metadata["audiodatarate"] = audioEncoder.settings.bitrate / 1000
-        if let sampleRate = audioEncoder.inSourceFormat?.mSampleRate {
+        metadata["audiodatarate"] = audioEncoder.getBitrate() / 1000
+        if let sampleRate = audioEncoder.getSampleRate() {
             metadata["audiosamplerate"] = sampleRate
         }
         return metadata
     }
 
-    private func createOnMetaDataMultiTrack(_ audioEncoders: [AudioEncoder],
-                                            _ videoEncoders: [VideoEncoder]) -> AsObject
-    {
-        let metadata = createOnMetaDataLegacy(audioEncoders.first!, videoEncoders.first!)
-        // var audioTrackIdInfoMap: [String: Any] = [:]
-        // for (trackId, encoder) in audioEncoders.enumerated() {
-        //     let settings = encoder.settings
-        //     audioTrackIdInfoMap[String(trackId)] = [
-        //         "audiodatarate": settings.bitRate / 1000,
-        //         "channels": 1,
-        //         "samplerate": 48000,
-        //     ]
-        // }
-        // metadata["audioTrackIdInfoMap"] = audioTrackIdInfoMap
-        // var videoTrackIdInfoMap: [String: Any] = [:]
-        // for (trackId, encoder) in videoEncoders.enumerated() {
-        //     let settings = encoder.settings.value
-        //     videoTrackIdInfoMap[String(trackId)] = [
-        //         "width": settings.videoSize.width,
-        //         "height": settings.videoSize.height,
-        //         "videodatarate": settings.bitRate / 1000,
-        //     ]
-        // }
-        // metadata["videoTrackIdInfoMap"] = videoTrackIdInfoMap
-        return metadata
-    }
-
-    func closeInternal() {
-        setReadyState(state: .initialized)
-    }
-
-    private func didChangeReadyState(_ readyState: ReadyState, oldReadyState: ReadyState) {
-        if oldReadyState == .publishing {
-            sendFCUnpublish()
-            sendDeleteStream()
-            closeStream()
-            mixer.stopEncoding()
-        }
-        switch readyState {
-        case .open:
-            handleOpen()
-        case .publish:
-            handlePublish()
-        case .publishing:
-            handlePublishing()
-        default:
-            break
-        }
-    }
-
-    private func handleOpen() {
-        guard let rtmpConnection else {
-            return
-        }
+    private func handleStateChangeToOpen() {
         info.clear()
         for message in messages {
             message.streamId = id
-            message.transactionId = rtmpConnection.getNextTransactionId()
+            message.transactionId = connection.getNextTransactionId()
             switch message.commandName {
             case "publish":
-                setReadyState(state: .publish)
+                setState(state: .publish)
             default:
                 break
             }
-            _ = rtmpConnection.socket.write(chunk: RtmpChunk(message: message))
+            _ = connection.socket.write(chunk: RtmpChunk(message: message))
         }
         messages.removeAll()
     }
 
-    private func handlePublish() {
+    private func handleStateChangeToPublish() {
         startedAt = .init()
         baseTimeStamp = -1.0
         prevRebasedAudioTimeStamp = -1.0
@@ -278,56 +285,28 @@ class RtmpStream: NetStream {
         dataTimeStamps.removeAll()
     }
 
-    private func handlePublishing() {
+    private func handleStateChangeToPublishing() {
         send(handlerName: "@setDataFrame", arguments: "onMetaData", createOnMetaData())
-        mixer.startEncoding(self)
-    }
-
-    @objc
-    private func on(status: Notification) {
-        guard let event = RtmpEvent.from(status) else {
-            return
-        }
-        netStreamLockQueue.async {
-            self.onInternal(event: event)
-        }
-    }
-
-    private func onInternal(event: RtmpEvent) {
-        guard let rtmpConnection,
-              let data = event.data as? AsObject,
-              let code = data["code"] as? String
-        else {
-            return
-        }
-        logger.info("rtmp: Got event: \(code)")
-        switch code {
-        case RtmpConnectionCode.connectSuccess.rawValue:
-            setReadyState(state: .initialized)
-            sendFCPublish()
-            rtmpConnection.createStream(self)
-        case RtmpStreamCode.publishStart.rawValue:
-            if readyState != .initialized {
-                setReadyState(state: .publishing)
-            }
-        default:
-            break
-        }
+        processor.startEncoding(self)
     }
 
     private func sendFCPublish() {
-        rtmpConnection?.call("FCPublish", arguments: [streamKey])
+        connection.call("FCPublish", arguments: [streamKey])
     }
 
     private func sendFCUnpublish() {
-        rtmpConnection?.call("FCUnpublish", arguments: [info.resourceName])
+        connection.call("FCUnpublish", arguments: [info.resourceName])
+    }
+
+    private func sendReleaseStream() {
+        connection.call("releaseStream", arguments: [streamKey])
     }
 
     private func sendDeleteStream() {
-        _ = rtmpConnection?.socket.write(chunk: RtmpChunk(message: RtmpCommandMessage(
+        _ = connection.socket.write(chunk: RtmpChunk(message: RtmpCommandMessage(
             streamId: id,
             transactionId: 0,
-            objectEncoding: .amf0,
+            commandType: .amf0Command,
             commandName: "deleteStream",
             commandObject: nil,
             arguments: [id]
@@ -335,13 +314,13 @@ class RtmpStream: NetStream {
     }
 
     private func closeStream() {
-        _ = rtmpConnection?.socket.write(chunk: RtmpChunk(
+        _ = connection.socket.write(chunk: RtmpChunk(
             type: .zero,
             chunkStreamId: RtmpChunk.ChunkStreamId.command.rawValue,
             message: RtmpCommandMessage(
                 streamId: 0,
                 transactionId: 0,
-                objectEncoding: .amf0,
+                commandType: .amf0Command,
                 commandName: "closeStream",
                 commandObject: nil,
                 arguments: [id]
@@ -350,10 +329,10 @@ class RtmpStream: NetStream {
     }
 
     private func handleEncodedAudioBuffer(_ buffer: Data, _ timestamp: UInt32) {
-        guard let rtmpConnection, readyState == .publishing else {
+        guard state == .publishing else {
             return
         }
-        let length = rtmpConnection.socket.write(chunk: RtmpChunk(
+        let length = connection.socket.write(chunk: RtmpChunk(
             type: audioChunkType,
             chunkStreamId: FlvTagType.audio.streamId,
             message: RtmpAudioMessage(streamId: id, timestamp: timestamp, payload: buffer)
@@ -363,10 +342,10 @@ class RtmpStream: NetStream {
     }
 
     private func handleEncodedVideoBuffer(_ buffer: Data, _ timestamp: UInt32) {
-        guard let rtmpConnection, readyState == .publishing else {
+        guard state == .publishing else {
             return
         }
-        let length = rtmpConnection.socket.write(chunk: RtmpChunk(
+        let length = connection.socket.write(chunk: RtmpChunk(
             type: videoChunkType,
             chunkStreamId: FlvTagType.video.streamId,
             message: RtmpVideoMessage(streamId: id, timestamp: timestamp, payload: buffer)
@@ -376,27 +355,51 @@ class RtmpStream: NetStream {
     }
 
     private func audioCodecOutputFormatInner(_ format: AVAudioFormat) {
-        var buffer = Data([RtmpStream.aac, FlvAacPacketType.seq.rawValue])
-        buffer.append(contentsOf: MpegTsAudioConfig(formatDescription: format.formatDescription).bytes)
-        handleEncodedAudioBuffer(buffer, 0)
+        guard let audioStreamBasicDescription = format.formatDescription.audioStreamBasicDescription else {
+            return
+        }
+        let writer = ByteWriter()
+        switch audioStreamBasicDescription.mFormatID {
+        case kAudioFormatOpus:
+            writer.writeUInt8(opus)
+            writer.writeUTF8Bytes("Opus")
+            writer.writeUTF8Bytes("OpusHead")
+            writer.writeUInt8(1)
+            writer.writeUInt8(UInt8(audioStreamBasicDescription.mChannelsPerFrame))
+            writer.writeUInt16(0)
+            writer.writeUInt32(UInt32(audioStreamBasicDescription.mSampleRate))
+            writer.writeUInt16(0)
+            writer.writeUInt8(0)
+        default:
+            writer.writeUInt8(aac)
+            writer.writeUInt8(FlvAacPacketType.seq.rawValue)
+            writer.writeBytes(MpegTsAudioConfig(formatDescription: format.formatDescription).encode())
+        }
+        handleEncodedAudioBuffer(writer.data, 0)
     }
 
-    private func audioCodecOutputBufferInner(_ buffer: AVAudioBuffer, _ presentationTimeStamp: CMTime) {
+    private func audioCodecOutputBufferInner(_ audioBuffer: AVAudioCompressedBuffer, _ presentationTimeStamp: CMTime) {
         guard let rebasedTimestamp = rebaseTimeStamp(timestamp: presentationTimeStamp.seconds) else {
+            logger.info("rtmp: \(name): Dropping audio buffer. Failed to rebase timestamp.")
             return
         }
         var delta = 0.0
         if prevRebasedAudioTimeStamp != -1.0 {
             delta = (rebasedTimestamp - prevRebasedAudioTimeStamp) * 1000
         }
-        guard let audioBuffer = buffer as? AVAudioCompressedBuffer, delta >= 0 else {
+        guard delta >= 0 else {
+            logger.info("rtmp: \(name): Dropping audio buffer (delta: \(delta))")
             return
         }
-        var buffer = Data([RtmpStream.aac, FlvAacPacketType.raw.rawValue])
-        buffer.append(
-            audioBuffer.data.assumingMemoryBound(to: UInt8.self),
-            count: Int(audioBuffer.byteLength)
-        )
+        var buffer: Data
+        switch audioBuffer.format.formatDescription.audioStreamBasicDescription?.mFormatID {
+        case kAudioFormatOpus:
+            buffer = Data([FlvAudioCodec.exHeader.rawValue << 4 | FlvOpusPacketType.codedFrames.rawValue])
+            buffer += "Opus".utf8Data
+        default:
+            buffer = Data([aac, FlvAacPacketType.raw.rawValue])
+        }
+        buffer.append(audioBuffer.data.assumingMemoryBound(to: UInt8.self), count: Int(audioBuffer.byteLength))
         prevRebasedAudioTimeStamp = rebasedTimestamp
         handleEncodedAudioBuffer(buffer, UInt32(audioTimeStampDelta))
         audioTimeStampDelta -= floor(audioTimeStampDelta)
@@ -410,14 +413,14 @@ class RtmpStream: NetStream {
         var buffer: Data
         switch format {
         case .h264:
-            guard let avcC = MpegTsVideoConfigAvc.getData(formatDescription) else {
+            guard let avcC = MpegTsVideoConfigAvc.getAvcC(formatDescription) else {
                 return
             }
             buffer = makeAvcVideoTagHeader(.key, .seq)
             buffer += Data([0, 0, 0])
             buffer += avcC
         case .hevc:
-            guard let hvcC = MpegTsVideoConfigHevc.getData(formatDescription) else {
+            guard let hvcC = MpegTsVideoConfigHevc.getHvcC(formatDescription) else {
                 return
             }
             buffer = makeHevcExtendedTagHeader(.key, .sequenceStart)
@@ -436,14 +439,15 @@ class RtmpStream: NetStream {
             decodeTimeStamp = sampleBuffer.presentationTimeStamp.seconds
         }
         guard let rebasedTimestamp = rebaseTimeStamp(timestamp: decodeTimeStamp) else {
+            logger.info("rtmp: \(name): Dropping video buffer. Failed to rebase timestamp.")
             return
         }
-        let compositionTime = calcVideoCompositionTime(sampleBuffer)
         var delta = 0.0
         if prevRebasedVideoTimeStamp != -1.0 {
             delta = (rebasedTimestamp - prevRebasedVideoTimeStamp) * 1000
         }
         guard let data = sampleBuffer.dataBuffer?.data, delta >= 0 else {
+            logger.info("rtmp: \(name): Dropping video buffer (delta: \(delta))")
             return
         }
         var buffer: Data
@@ -454,24 +458,13 @@ class RtmpStream: NetStream {
         case .hevc:
             buffer = makeHevcExtendedTagHeader(frameType, .codedFrames)
         }
+        let compositionTime = calcVideoCompositionTime(sampleBuffer)
         buffer.append(contentsOf: compositionTime.bigEndian.data[1 ..< 4])
         buffer.append(data)
         prevRebasedVideoTimeStamp = rebasedTimestamp
         handleEncodedVideoBuffer(buffer, UInt32(videoTimeStampDelta))
         videoTimeStampDelta -= floor(videoTimeStampDelta)
         videoTimeStampDelta += delta
-    }
-
-    private func calcVideoCompositionTime(_ sampleBuffer: CMSampleBuffer) -> Int32 {
-        let presentationTimeStamp = sampleBuffer.presentationTimeStamp
-        let decodeTimeStamp = sampleBuffer.decodeTimeStamp
-        guard decodeTimeStamp.isValid, decodeTimeStamp != presentationTimeStamp else {
-            return 0
-        }
-        guard let rebasedTimestamp = rebaseTimeStamp(timestamp: presentationTimeStamp.seconds) else {
-            return 0
-        }
-        return Int32((rebasedTimestamp - prevRebasedVideoTimeStamp + compositionTimeOffset) * 1000)
     }
 
     private func rebaseTimeStamp(timestamp: Double) -> Double? {
@@ -487,41 +480,34 @@ class RtmpStream: NetStream {
     }
 }
 
-extension RtmpStream: RtmpEventDispatcherConvertible {
-    func addEventListener(_ type: RtmpEvent.Name, selector: Selector, observer: AnyObject? = nil) {
-        dispatcher.addEventListener(type, selector: selector, observer: observer)
-    }
-
-    func removeEventListener(_ type: RtmpEvent.Name, selector: Selector, observer: AnyObject? = nil) {
-        dispatcher.removeEventListener(type, selector: selector, observer: observer)
-    }
-}
-
 extension RtmpStream: AudioCodecDelegate {
     func audioCodecOutputFormat(_ format: AVAudioFormat) {
-        netStreamLockQueue.async {
+        processorControlQueue.async {
             self.audioCodecOutputFormatInner(format)
         }
     }
 
-    func audioCodecOutputBuffer(_ buffer: AVAudioBuffer, _ presentationTimeStamp: CMTime) {
-        netStreamLockQueue.async {
+    func audioCodecOutputBuffer(_ buffer: AVAudioCompressedBuffer, _ presentationTimeStamp: CMTime) {
+        processorControlQueue.async {
             self.audioCodecOutputBufferInner(buffer, presentationTimeStamp)
         }
     }
 }
 
 extension RtmpStream: VideoEncoderDelegate {
-    func videoEncoderOutputFormat(_ codec: VideoEncoder, _ formatDescription: CMFormatDescription) {
-        let format = codec.settings.value.format
-        netStreamLockQueue.async {
+    func videoEncoderOutputFormat(_ encoder: VideoEncoder, _ formatDescription: CMFormatDescription) {
+        let format = encoder.settings.value.format
+        processorControlQueue.async {
             self.videoCodecOutputFormatInner(format, formatDescription)
         }
     }
 
-    func videoEncoderOutputSampleBuffer(_ codec: VideoEncoder, _ sampleBuffer: CMSampleBuffer) {
+    func videoEncoderOutputSampleBuffer(_ codec: VideoEncoder,
+                                        _ sampleBuffer: CMSampleBuffer,
+                                        _: CMTime)
+    {
         let format = codec.settings.value.format
-        netStreamLockQueue.async {
+        processorControlQueue.async {
             self.videoCodecOutputSampleBufferInner(format, sampleBuffer)
         }
     }

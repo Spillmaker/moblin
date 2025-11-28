@@ -2,9 +2,9 @@ import CoreMedia
 import Foundation
 
 extension Model {
-    func rtmpCameras() -> [String] {
+    func rtmpCameras() -> [(UUID, String)] {
         return database.rtmpServer.streams.map { stream in
-            stream.camera()
+            (stream.id, stream.camera())
         }
     }
 
@@ -14,9 +14,9 @@ extension Model {
         }
     }
 
-    func getRtmpStream(camera: String) -> SettingsRtmpServerStream? {
+    func getRtmpStream(idString: String) -> SettingsRtmpServerStream? {
         return database.rtmpServer.streams.first { stream in
-            camera == stream.camera()
+            idString == stream.id.uuidString
         }
     }
 
@@ -33,42 +33,31 @@ extension Model {
     }
 
     func isRtmpStreamConnected(streamKey: String) -> Bool {
-        return rtmpServer?.isStreamConnected(streamKey: streamKey) ?? false
+        return ingests.rtmp?.isStreamConnected(streamKey: streamKey) ?? false
     }
 
     func reloadRtmpStreams() {
-        for rtmpCamera in rtmpCameras() {
-            guard let stream = getRtmpStream(camera: rtmpCamera) else {
-                continue
-            }
-            if isRtmpStreamConnected(streamKey: stream.streamKey) {
-                let micId = "\(stream.id.uuidString) 0"
-                let isLastMic = (currentMic.id == micId)
-                handleRtmpServerPublishStop(streamKey: stream.streamKey, reason: nil)
-                handleRtmpServerPublishStart(streamKey: stream.streamKey)
-                if currentMic.id != micId, isLastMic {
-                    selectMicById(id: micId)
-                }
+        for stream in database.rtmpServer.streams where isRtmpStreamConnected(streamKey: stream.streamKey) {
+            let micId = "\(stream.id.uuidString) 0"
+            let isLastMic = (mic.current.id == micId)
+            handleRtmpServerPublishStop(streamKey: stream.streamKey, reason: nil)
+            handleRtmpServerPublishStart(streamKey: stream.streamKey)
+            if mic.current.id != micId, isLastMic {
+                selectMicById(id: micId)
             }
         }
     }
 
     func handleRtmpServerPublishStart(streamKey: String) {
         DispatchQueue.main.async {
-            let camera = self.getRtmpStream(streamKey: streamKey)?.camera() ?? rtmpCamera(name: "Unknown")
-            self.makeToast(title: String(localized: "\(camera) connected"))
             guard let stream = self.getRtmpStream(streamKey: streamKey) else {
                 return
             }
-            let name = "RTMP \(camera)"
-            let latency = Double(stream.latency!) / 1000.0
-            self.media.addBufferedVideo(cameraId: stream.id, name: name, latency: latency)
-            self.media.addBufferedAudio(cameraId: stream.id, name: name, latency: latency)
-            if stream.autoSelectMic! {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    self.selectMicById(id: "\(stream.id) 0")
-                }
-            }
+            let camera = stream.camera()
+            self.makeToast(title: String(localized: "\(camera) connected"))
+            let latency = Double(stream.latency) / 1000.0
+            self.media.addBufferedVideo(cameraId: stream.id, name: camera, latency: latency)
+            self.media.addBufferedAudio(cameraId: stream.id, name: camera, latency: latency)
             self.markDjiIsStreamingIfNeeded(rtmpServerStreamId: stream.id)
         }
     }
@@ -79,7 +68,7 @@ extension Model {
                 return
             }
             self.stopRtmpServerStream(stream: stream, showToast: true, reason: reason)
-            self.updateAutoSceneSwitcherVideoSourceDisconnected()
+            self.switchMicIfNeededAfterNetworkCameraChange()
         }
     }
 
@@ -89,9 +78,6 @@ extension Model {
         }
         media.removeBufferedVideo(cameraId: stream.id)
         media.removeBufferedAudio(cameraId: stream.id)
-        if currentMic.id == "\(stream.id) 0" {
-            setMicFromSettings()
-        }
         for device in database.djiDevices.devices {
             guard device.rtmpUrlType == .server, device.serverRtmpStreamId == stream.id else {
                 continue
@@ -108,40 +94,23 @@ extension Model {
         media.appendBufferedAudioSampleBuffer(cameraId: cameraId, sampleBuffer: sampleBuffer)
     }
 
-    func rtmpServerInfo() {
-        guard let rtmpServer, logger.debugEnabled else {
-            return
-        }
-        for stream in database.rtmpServer.streams {
-            guard let info = rtmpServer.streamInfo(streamKey: stream.streamKey) else {
-                continue
-            }
-            let audioRate = formatTwoDecimals(info.audioSamplesPerSecond)
-            let fps = formatTwoDecimals(info.videoFps)
-            logger
-                .debug(
-                    "RTMP server stream \(stream.streamKey) has FPS \(fps) and \(audioRate) audio samples/second"
-                )
-        }
-    }
-
     func stopRtmpServer() {
-        rtmpServer?.stop()
-        rtmpServer = nil
+        ingests.rtmp?.stop()
+        ingests.rtmp = nil
         stopAllRtmpStreams()
     }
 
     func reloadRtmpServer() {
         stopRtmpServer()
         if database.rtmpServer.enabled {
-            rtmpServer = RtmpServer(settings: database.rtmpServer.clone())
-            rtmpServer?.delegate = self
-            rtmpServer!.start()
+            ingests.rtmp = RtmpServer(settings: database.rtmpServer.clone())
+            ingests.rtmp?.delegate = self
+            ingests.rtmp?.start()
         }
     }
 
     func rtmpServerEnabled() -> Bool {
-        return rtmpServer != nil
+        return database.rtmpServer.enabled
     }
 }
 

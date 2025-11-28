@@ -10,7 +10,7 @@ private struct DeepLinkCreatorQuickButtonSettingsView: View {
                 DraggableItemPrefixView()
                 if let globalButton = model.getGlobalButton(type: button.type) {
                     IconAndTextView(
-                        image: globalButton.systemImageNameOff,
+                        image: globalButton.imageOff,
                         text: globalButton.name,
                         longDivider: true
                     )
@@ -34,16 +34,16 @@ struct DeepLinkCreatorQuickButtonsSettingsView: View {
                 Toggle("Two columns", isOn: $quickButtons.twoColumns)
                 Toggle("Show name", isOn: $quickButtons.showName)
             } header: {
-                Text("Appearence")
+                Text("Appearance")
             }
             Section {
                 List {
                     ForEach(quickButtons.buttons) { button in
                         DeepLinkCreatorQuickButtonSettingsView(button: button)
                     }
-                    .onMove(perform: { froms, to in
+                    .onMove { froms, to in
                         quickButtons.buttons.move(fromOffsets: froms, toOffset: to)
-                    })
+                    }
                 }
             }
         }

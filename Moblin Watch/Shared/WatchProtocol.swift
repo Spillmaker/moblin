@@ -21,7 +21,8 @@ enum WatchMessageToWatch: String {
     case stopWorkout
     case viewerCount
     case padelScoreboard
-    case removePadelScoreboard
+    case genericScoreboard
+    case removeScoreboard
     case scoreboardPlayers
 
     static func pack(type: WatchMessageToWatch, data: Any) -> [String: Any] {
@@ -58,6 +59,7 @@ enum WatchMessageFromWatch: String {
     case setScene
     case updateWorkoutStats
     case updatePadelScoreboard
+    case updateGenericScoreboard
     case createStreamMarker
     case instantReplay
     case saveReplay
@@ -92,6 +94,7 @@ struct WatchProtocolChatSegment: Codable {
 
 // periphery:ignore
 enum WatchProtocolChatHighlightKind: Codable {
+    case reply
     case redemption
     case other
 }
@@ -99,7 +102,7 @@ enum WatchProtocolChatHighlightKind: Codable {
 // periphery:ignore
 struct WatchProtocolChatHighlight: Codable {
     let kind: WatchProtocolChatHighlightKind
-    let color: WatchProtocolColor
+    let barColor: WatchProtocolColor
     let image: String
     let title: String
 }
@@ -109,7 +112,7 @@ struct WatchProtocolChatMessage: Codable {
     // Starts at 1 and incremented for each new message
     var id: Int
     var timestamp: String
-    var user: String
+    var displayName: String
     var userColor: WatchProtocolColor
     var userBadges: [URL]
     var segments: [WatchProtocolChatSegment]
@@ -129,7 +132,6 @@ struct WatchProtocolScene: Codable, Identifiable {
     var name: String
 }
 
-// periphery:ignore
 struct WatchProtocolZoomPreset: Codable, Identifiable {
     var id: UUID
     var name: String
@@ -141,7 +143,6 @@ enum WatchProtocolWorkoutType: Codable {
     case cycling
 }
 
-// periphery:ignore
 struct WatchProtocolStartWorkout: Codable {
     var type: WatchProtocolWorkoutType
 }
@@ -161,27 +162,71 @@ struct WatchProtocolPadelScoreboardScore: Codable {
 
 struct WatchProtocolPadelScoreboard: Codable {
     var id: UUID
-    // periphery:ignore
     var home: [UUID]
-    // periphery:ignore
     var away: [UUID]
     var score: [WatchProtocolPadelScoreboardScore]
 }
 
-struct WatchProtocolScoreboardPlayer: Codable {
-    // periphery:ignore
+struct WatchProtocolGenericScoreboard: Codable {
     var id: UUID
-    // periphery:ignore
+    var homeTeam: String
+    var awayTeam: String
+    var homeScore: Int
+    var awayScore: Int
+    var clockMinutes: Int
+    var clockSeconds: Int
+    var clockMaximum: Int
+    var isClockStopped: Bool
+    var title: String
+}
+
+struct WatchProtocolPadelScoreboardAction: Codable {
+    let id: UUID
+    let action: WatchProtocolPadelScoreboardActionType
+}
+
+struct WatchProtocolPadelScoreboardActionPlayers: Codable {
+    var home: [UUID]
+    var away: [UUID]
+}
+
+enum WatchProtocolPadelScoreboardActionType: Codable {
+    case reset
+    case undo
+    case incrementHome
+    case incrementAway
+    case players(WatchProtocolPadelScoreboardActionPlayers)
+}
+
+struct WatchProtocolGenericScoreboardAction: Codable {
+    let id: UUID
+    let action: WatchProtocolGenericScoreboardActionType
+}
+
+enum WatchProtocolGenericScoreboardActionType: Codable {
+    case reset
+    case undo
+    case incrementHome
+    case incrementAway
+    case setTitle(title: String)
+    case setClock(minutes: Int, seconds: Int)
+    case setClockState(stopped: Bool)
+}
+
+struct WatchProtocolScoreboardPlayer: Codable {
+    var id: UUID
     var name: String
 }
 
+struct WatchProtocolInstantReplay: Codable {
+    let duration: Int
+}
+
 extension WatchProtocolColor {
-    // periphery:ignore
     private func colorScale(_ color: Int) -> Double {
         return Double(color) / 255
     }
 
-    // periphery:ignore
     func color() -> Color {
         return Color(
             red: colorScale(red),

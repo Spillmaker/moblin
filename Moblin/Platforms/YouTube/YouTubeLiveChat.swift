@@ -1,6 +1,34 @@
 import Foundation
 
 private let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:124.0) Gecko/20100101 Firefox/124.0"
+
+func fetchYouTubeVideoId(handle: String) async throws -> String {
+    guard let url = URL(string: "https://www.youtube.com/\(handle)/live") else {
+        throw "Cannot create URL"
+    }
+    var request = URLRequest(url: url)
+    request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+    request.setValue("CONSENT=YES+1", forHTTPHeaderField: "Cookie")
+    let (data, response) = try await httpGet(request: request)
+    if !response.isSuccessful {
+        throw "Not successful"
+    }
+    guard let html = String(data: data, encoding: .utf8) else {
+        throw "Not html"
+    }
+    let patterns = [
+        /<link rel="shortlinkUrl" href="https:\/\/youtu\.be\/([^"]+)"/,
+        /<link rel='shortlinkUrl' href='https:\/\/youtu\.be\/([^']+)'/,
+        /shortlinkUrl[^>]*href=[\"\']https:\/\/youtu\.be\/([^\"\']+)/,
+    ]
+    for pattern in patterns {
+        if let match = try? pattern.firstMatch(in: html) {
+            return String(match.1)
+        }
+    }
+    throw "Video id not found"
+}
+
 private let minimumPollDelayMs = 200
 private let maximumPollDelayMs = 3000
 
@@ -9,12 +37,7 @@ private func createPaidMessageHighlight(chatDescription: ChatDescription) -> Cha
     if let text = chatDescription.purchaseAmountText?.simpleText {
         amount = ", \(text)"
     }
-    return ChatHighlight(
-        kind: .other,
-        color: .orange,
-        image: "message",
-        title: String(localized: "Super Chat\(amount)")
-    )
+    return ChatHighlight.makePaidMessage(amount: amount)
 }
 
 private func createPaidStickerHighlight(chatDescription: ChatDescription) -> ChatHighlight {
@@ -22,16 +45,11 @@ private func createPaidStickerHighlight(chatDescription: ChatDescription) -> Cha
     if let text = chatDescription.purchaseAmountText?.simpleText {
         amount = ", \(text)"
     }
-    return ChatHighlight(
-        kind: .other,
-        color: .green,
-        image: "doc.plaintext",
-        title: String(localized: "Super Sticker\(amount)")
-    )
+    return ChatHighlight.makePaidSticker(amount: amount)
 }
 
 private func createMemberHighlight() -> ChatHighlight {
-    return ChatHighlight(kind: .other, color: .blue, image: "medal", title: String(localized: "Member"))
+    return ChatHighlight.makeMember()
 }
 
 private struct InvalidationContinuationData: Codable {
@@ -71,11 +89,24 @@ private struct Amount: Codable {
     let simpleText: String
 }
 
+private struct BadgeIcon: Codable {
+    let iconType: String?
+}
+
+private struct AuthorBadgeRenderer: Codable {
+    let icon: BadgeIcon?
+}
+
+private struct AuthorBadge: Codable {
+    let liveChatAuthorBadgeRenderer: AuthorBadgeRenderer?
+}
+
 private struct ChatDescription: Codable {
     let authorName: Author
     let message: Message?
     let purchaseAmountText: Amount?
     let headerSubtext: Message?
+    let authorBadges: [AuthorBadge]?
 }
 
 private struct AddChatItemActionItem: Codable {
@@ -132,7 +163,7 @@ final class YouTubeLiveChat: NSObject {
             onOk: handleOk,
             settings: settings
         )
-        task = Task.init {
+        task = Task {
             while true {
                 do {
                     try await getInitialContinuation()
@@ -296,18 +327,23 @@ final class YouTubeLiveChat: NSObject {
             return 0
         }
         let nonMutSegments = segments
+        let isOwner = chatDescription.authorBadges?
+            .first(where: { $0.liveChatAuthorBadgeRenderer?.icon?.iconType == "OWNER" }) != nil
         await MainActor.run {
             model.appendChatMessage(platform: .youTube,
+                                    messageId: nil,
+                                    displayName: chatDescription.authorName.simpleText,
                                     user: chatDescription.authorName.simpleText,
                                     userId: nil,
                                     userColor: nil,
                                     userBadges: [],
                                     segments: nonMutSegments,
-                                    timestamp: model.digitalClock,
+                                    timestamp: model.statusOther.digitalClock,
                                     timestampTime: .now,
                                     isAction: false,
                                     isSubscriber: false,
                                     isModerator: false,
+                                    isOwner: isOwner,
                                     bits: nil,
                                     highlight: highlight, live: true)
         }
@@ -365,7 +401,7 @@ final class YouTubeLiveChat: NSObject {
         var request = URLRequest(url: from)
         request.httpMethod = "POST"
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setContentType("application/json")
         let (data, response) = try await URLSession.shared.upload(for: request, from: data)
         if let response = response.http {
             return (data, response)

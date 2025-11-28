@@ -1,104 +1,68 @@
 import SwiftUI
 
 private struct AutoSwitcherSceneSettingsView: View {
-    @EnvironmentObject var model: Model
-    var scene: SettingsAutoSceneSwitcherScene
-    @Binding var sceneId: UUID?
-    @Binding var sceneName: String
-    @Binding var time: Int
+    let model: Model
+    @ObservedObject var scene: SettingsAutoSceneSwitcherScene
 
-    var body: some View {
-        Form {
-            Section {
-                Picker(selection: $sceneId) {
-                    Text("-- None --")
-                        .tag(nil as UUID?)
-                    ForEach(model.database.scenes) { scene in
-                        Text(scene.name)
-                            .tag(scene.id as UUID?)
-                    }
-                } label: {
-                    Text("Scene")
-                }
-                .onChange(of: sceneId) { _ in
-                    scene.sceneId = sceneId
-                    if let sceneId {
-                        sceneName = model.getSceneName(id: sceneId)
-                    } else {
-                        sceneName = "-- None --"
-                    }
-                }
-                Picker(selection: $time) {
-                    ForEach([5, 10, 15, 30, 60, 120], id: \.self) { time in
-                        Text("\(time)s")
-                    }
-                } label: {
-                    Text("Time")
-                }
-                .onChange(of: time) { _ in
-                    scene.time = time
-                }
-            }
+    private func getSceneName(sceneId: UUID?) -> String {
+        if let sceneId {
+            return model.getSceneName(id: sceneId)
+        } else {
+            return String(localized: "-- None --")
         }
     }
-}
-
-private struct AutoSwitcherSceneSettingsItemView: View {
-    @EnvironmentObject var model: Model
-    var scene: SettingsAutoSceneSwitcherScene
-    @State var sceneId: UUID?
-    @State var sceneName: String
-    @State var time: Int
 
     var body: some View {
         NavigationLink {
-            AutoSwitcherSceneSettingsView(scene: scene, sceneId: $sceneId, sceneName: $sceneName, time: $time)
+            Form {
+                Section {
+                    Picker(selection: $scene.sceneId) {
+                        Text("-- None --")
+                            .tag(nil as UUID?)
+                        ForEach(model.database.scenes) { scene in
+                            Text(scene.name)
+                                .tag(scene.id as UUID?)
+                        }
+                    } label: {
+                        Text("Scene")
+                    }
+                    Picker(selection: $scene.time) {
+                        ForEach([5, 10, 15, 30, 60, 120], id: \.self) { time in
+                            Text("\(time)s")
+                        }
+                    } label: {
+                        Text("Time")
+                    }
+                }
+            }
         } label: {
             HStack {
                 DraggableItemPrefixView()
-                Text(sceneName)
+                Text(getSceneName(sceneId: scene.sceneId))
                 Spacer()
-                Text("\(time)s")
+                Text("\(scene.time)s")
             }
         }
     }
 }
 
 private struct AutoSwitcherScenesSettingsView: View {
-    @EnvironmentObject var model: Model
-    var autoSwitcher: SettingsAutoSceneSwitcher
-
-    var database: Database {
-        model.database
-    }
-
-    private func getSceneName(sceneId: UUID?) -> String {
-        if let sceneId {
-            return model.getSceneName(id: sceneId)
-        } else {
-            return "-- None --"
-        }
-    }
+    let model: Model
+    @ObservedObject var autoSwitcher: SettingsAutoSceneSwitcher
 
     var body: some View {
         Section {
             ForEach(autoSwitcher.scenes) { scene in
-                AutoSwitcherSceneSettingsItemView(
-                    scene: scene,
-                    sceneId: scene.sceneId,
-                    sceneName: getSceneName(sceneId: scene.sceneId),
-                    time: scene.time
-                )
+                AutoSwitcherSceneSettingsView(model: model, scene: scene)
             }
-            .onMove(perform: { froms, to in
+            .onMove { froms, to in
                 autoSwitcher.scenes.move(fromOffsets: froms, toOffset: to)
-            })
-            .onDelete(perform: { offsets in
+            }
+            .onDelete { offsets in
                 autoSwitcher.scenes.remove(atOffsets: offsets)
-            })
+            }
             AddButtonView {
                 autoSwitcher.scenes.append(SettingsAutoSceneSwitcherScene())
-                model.objectWillChange.send()
             }
         } footer: {
             SwipeLeftToDeleteHelpView(kind: String(localized: "a scene"))
@@ -108,27 +72,18 @@ private struct AutoSwitcherScenesSettingsView: View {
 
 private struct AutoSwitcherSettingsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var autoSceneSwitchers: SettingsAutoSceneSwitchers
     @ObservedObject var autoSwitcher: SettingsAutoSceneSwitcher
 
     var body: some View {
         Form {
             Section {
-                NavigationLink {
-                    NameEditView(name: $autoSwitcher.name)
-                } label: {
-                    TextItemView(name: String(localized: "Name"), value: autoSwitcher.name)
-                }
+                NameEditView(name: $autoSwitcher.name, existingNames: autoSceneSwitchers.switchers)
             }
             Section {
-                Toggle(isOn: Binding(get: {
-                    autoSwitcher.shuffle
-                }, set: {
-                    autoSwitcher.shuffle = $0
-                })) {
-                    Text("Shuffle")
-                }
+                Toggle("Shuffle", isOn: $autoSwitcher.shuffle)
             }
-            AutoSwitcherScenesSettingsView(autoSwitcher: autoSwitcher)
+            AutoSwitcherScenesSettingsView(model: model, autoSwitcher: autoSwitcher)
         }
         .navigationTitle("Auto scene switcher")
     }
@@ -136,11 +91,12 @@ private struct AutoSwitcherSettingsView: View {
 
 private struct AutoSwitcherSettingsItemView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var autoSceneSwitchers: SettingsAutoSceneSwitchers
     @ObservedObject var autoSwitcher: SettingsAutoSceneSwitcher
 
     var body: some View {
         NavigationLink {
-            AutoSwitcherSettingsView(autoSwitcher: autoSwitcher)
+            AutoSwitcherSettingsView(autoSceneSwitchers: autoSceneSwitchers, autoSwitcher: autoSwitcher)
         } label: {
             HStack {
                 DraggableItemPrefixView()
@@ -151,28 +107,81 @@ private struct AutoSwitcherSettingsItemView: View {
     }
 }
 
-struct AutoSwitchersSettingsView: View {
+private struct AutoSceneSwitcherItemView: View {
+    @ObservedObject var autoSceneSwitcher: SettingsAutoSceneSwitcher
+
+    var body: some View {
+        Text(autoSceneSwitcher.name)
+            .tag(autoSceneSwitcher.id as UUID?)
+    }
+}
+
+struct AutoSwitchersSelectView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var autoSceneSwitcher: AutoSceneSwitcherProvider
     @ObservedObject var autoSceneSwitchers: SettingsAutoSceneSwitchers
 
     var body: some View {
         Section {
-            ForEach(autoSceneSwitchers.switchers) { autoSwitcher in
-                AutoSwitcherSettingsItemView(autoSwitcher: autoSwitcher)
+            Picker("Current", selection: $autoSceneSwitcher.currentSwitcherId) {
+                Text("-- None --")
+                    .tag(nil as UUID?)
+                ForEach(autoSceneSwitchers.switchers) {
+                    AutoSceneSwitcherItemView(autoSceneSwitcher: $0)
+                }
             }
-            .onMove(perform: { froms, to in
-                autoSceneSwitchers.switchers.move(fromOffsets: froms, toOffset: to)
-            })
-            .onDelete(perform: { offsets in
-                model.deleteAutoSceneSwitchers(offsets: offsets)
-            })
-            CreateButtonView {
-                autoSceneSwitchers.switchers.append(SettingsAutoSceneSwitcher())
+            .onChange(of: autoSceneSwitcher.currentSwitcherId) {
+                model.setAutoSceneSwitcher(id: $0)
             }
-        } header: {
+        }
+    }
+}
+
+struct AutoSwitchersView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var autoSceneSwitchers: SettingsAutoSceneSwitchers
+    let showSelector: Bool
+
+    var body: some View {
+        Form {
+            if showSelector {
+                AutoSwitchersSelectView(autoSceneSwitcher: model.autoSceneSwitcher,
+                                        autoSceneSwitchers: autoSceneSwitchers)
+            }
+            Section {
+                ForEach(autoSceneSwitchers.switchers) { autoSwitcher in
+                    AutoSwitcherSettingsItemView(autoSceneSwitchers: autoSceneSwitchers, autoSwitcher: autoSwitcher)
+                }
+                .onMove { froms, to in
+                    autoSceneSwitchers.switchers.move(fromOffsets: froms, toOffset: to)
+                }
+                .onDelete { offsets in
+                    model.deleteAutoSceneSwitchers(offsets: offsets)
+                }
+                CreateButtonView {
+                    let switcher = SettingsAutoSceneSwitcher()
+                    switcher.name = makeUniqueName(name: SettingsAutoSceneSwitcher.baseName,
+                                                   existingNames: autoSceneSwitchers.switchers)
+                    autoSceneSwitchers.switchers.append(switcher)
+                }
+            } footer: {
+                SwipeLeftToDeleteHelpView(kind: String(localized: "an auto scene switcher"))
+            }
+        }
+        .navigationTitle("Auto scene switchers")
+    }
+}
+
+struct AutoSwitchersSettingsView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var autoSceneSwitchers: SettingsAutoSceneSwitchers
+    let showSelector: Bool
+
+    var body: some View {
+        NavigationLink {
+            AutoSwitchersView(autoSceneSwitchers: autoSceneSwitchers, showSelector: showSelector)
+        } label: {
             Text("Auto scene switchers")
-        } footer: {
-            SwipeLeftToDeleteHelpView(kind: String(localized: "an auto scene switcher"))
         }
     }
 }

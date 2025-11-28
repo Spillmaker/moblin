@@ -6,7 +6,7 @@ private struct StreamItemView: View {
     @ObservedObject var stream: SettingsStream
 
     var body: some View {
-        let item = NavigationLink {
+        NavigationLink {
             StreamSettingsView(database: database, stream: stream)
         } label: {
             HStack {
@@ -20,38 +20,27 @@ private struct StreamItemView: View {
                 .disabled(stream.enabled || model.isLive || model.isRecording)
             }
         }
-        if stream.enabled {
-            item.swipeActions(edge: .trailing) {
-                Button {
-                    database.streams.append(stream.clone())
-                } label: {
-                    Text("Duplicate")
-                }
-                .tint(.blue)
-            }
-        } else {
-            item.swipeActions(edge: .trailing) {
-                Button {
+        .swipeActions(edge: .trailing) {
+            if !stream.enabled {
+                Button(role: .destructive) {
                     database.streams.removeAll { $0 == stream }
                 } label: {
-                    Text("Delete")
+                    Label("Delete", systemImage: "trash")
                 }
-                .tint(.red)
             }
-            .swipeActions(edge: .trailing) {
-                Button {
-                    database.streams.append(stream.clone())
-                } label: {
-                    Text("Duplicate")
-                }
-                .tint(.blue)
+            Button {
+                database.streams.append(stream.clone())
+            } label: {
+                Label("Duplicate", systemImage: "plus.square.on.square")
             }
+            .tint(.blue)
         }
     }
 }
 
 struct StreamsSettingsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var createStreamWizard: CreateStreamWizard
     @ObservedObject var database: Database
 
     var body: some View {
@@ -61,22 +50,22 @@ struct StreamsSettingsView: View {
                     ForEach(database.streams) { stream in
                         StreamItemView(database: database, stream: stream)
                     }
-                    .onMove(perform: { froms, to in
+                    .onMove { froms, to in
                         database.streams.move(fromOffsets: froms, toOffset: to)
-                    })
+                    }
                 }
                 CreateButtonView {
                     model.resetWizard()
-                    model.isPresentingWizard = true
+                    createStreamWizard.isPresenting = true
                 }
                 .disabled(model.isLive || model.isRecording)
-                .sheet(isPresented: $model.isPresentingWizard) {
+                .sheet(isPresented: $createStreamWizard.isPresenting) {
                     NavigationStack {
-                        StreamWizardSettingsView()
+                        StreamWizardSettingsView(model: model, createStreamWizard: createStreamWizard)
                     }
                 }
             } footer: {
-                SwipeLeftToDeleteHelpView(kind: String(localized: "a stream"))
+                SwipeLeftToDuplicateOrDeleteHelpView(kind: String(localized: "a stream"))
             }
         }
         .navigationTitle("Streams")

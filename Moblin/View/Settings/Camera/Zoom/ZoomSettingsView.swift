@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ZoomSettingsView: View {
     @EnvironmentObject var model: Model
-    @State var speed: Float
+    @ObservedObject var zoom: SettingsZoom
 
     var body: some View {
         Form {
@@ -10,60 +10,40 @@ struct ZoomSettingsView: View {
                 HStack {
                     Text("Speed")
                     Slider(
-                        value: $speed,
+                        value: $zoom.speed,
                         in: 1 ... 10,
-                        step: 0.1,
-                        onEditingChanged: { begin in
-                            guard !begin else {
-                                return
-                            }
-                            model.database.zoom.speed = speed
-                        }
+                        step: 0.1
                     )
-                    Text(String(formatOneDecimal(speed)))
+                    Text(String(formatOneDecimal(zoom.speed)))
                         .frame(width: 35)
                 }
             }
             Section {
                 List {
-                    ForEach(model.database.zoom.back) { preset in
-                        NavigationLink {
-                            ZoomPresetSettingsView(
-                                preset: preset,
-                                minX: minZoomX,
-                                maxX: model.getMinMaxZoomX(position: .back).1
-                            )
-                        } label: {
-                            HStack {
-                                DraggableItemPrefixView()
-                                TextItemView(
-                                    name: preset.name,
-                                    value: String(preset.x!)
-                                )
-                            }
-                        }
-                        .deleteDisabled(model.database.zoom.back.count == 1)
+                    ForEach(zoom.back) { preset in
+                        ZoomPresetSettingsView(
+                            preset: preset,
+                            minX: minZoomX,
+                            maxX: model.getMinMaxZoomX(position: .back).1
+                        )
+                        .deleteDisabled(zoom.back.count == 1)
                     }
-                    .onMove(perform: { froms, to in
-                        model.database.zoom.back.move(fromOffsets: froms, toOffset: to)
-                        model.backZoomUpdated()
-                        model.objectWillChange.send()
-                    })
-                    .onDelete(perform: { offsets in
-                        model.database.zoom.back.remove(atOffsets: offsets)
-                        model.backZoomUpdated()
-                        model.objectWillChange.send()
-                    })
+                    .onMove { froms, to in
+                        zoom.back.move(fromOffsets: froms, toOffset: to)
+                        model.backZoomPresetSettingsUpdated()
+                    }
+                    .onDelete { offsets in
+                        zoom.back.remove(atOffsets: offsets)
+                        model.backZoomPresetSettingsUpdated()
+                    }
                 }
                 CreateButtonView {
-                    model.database.zoom.back.append(SettingsZoomPreset(
+                    zoom.back.append(SettingsZoomPreset(
                         id: UUID(),
                         name: "1x",
-                        level: 1.0,
                         x: 1.0
                     ))
-                    model.backZoomUpdated()
-                    model.objectWillChange.send()
+                    model.backZoomPresetSettingsUpdated()
                 }
             } header: {
                 Text("Back camera presets")
@@ -72,44 +52,30 @@ struct ZoomSettingsView: View {
             }
             Section {
                 List {
-                    ForEach(model.database.zoom.front) { preset in
-                        NavigationLink {
-                            ZoomPresetSettingsView(
-                                preset: preset,
-                                minX: minZoomX,
-                                maxX: model.getMinMaxZoomX(position: .front).1
-                            )
-                        } label: {
-                            HStack {
-                                DraggableItemPrefixView()
-                                TextItemView(
-                                    name: preset.name,
-                                    value: String(preset.x!)
-                                )
-                            }
-                        }
-                        .deleteDisabled(model.database.zoom.front.count == 1)
+                    ForEach(zoom.front) { preset in
+                        ZoomPresetSettingsView(
+                            preset: preset,
+                            minX: minZoomX,
+                            maxX: model.getMinMaxZoomX(position: .front).1
+                        )
+                        .deleteDisabled(zoom.front.count == 1)
                     }
-                    .onMove(perform: { froms, to in
-                        model.database.zoom.front.move(fromOffsets: froms, toOffset: to)
-                        model.frontZoomUpdated()
-                        model.objectWillChange.send()
-                    })
-                    .onDelete(perform: { offsets in
-                        model.database.zoom.front.remove(atOffsets: offsets)
-                        model.frontZoomUpdated()
-                        model.objectWillChange.send()
-                    })
+                    .onMove { froms, to in
+                        zoom.front.move(fromOffsets: froms, toOffset: to)
+                        model.frontZoomPresetSettingUpdated()
+                    }
+                    .onDelete { offsets in
+                        zoom.front.remove(atOffsets: offsets)
+                        model.frontZoomPresetSettingUpdated()
+                    }
                 }
                 CreateButtonView {
-                    model.database.zoom.front.append(SettingsZoomPreset(
+                    zoom.front.append(SettingsZoomPreset(
                         id: UUID(),
                         name: "1x",
-                        level: 1.0,
                         x: 1.0
                     ))
-                    model.frontZoomUpdated()
-                    model.objectWillChange.send()
+                    model.frontZoomPresetSettingUpdated()
                 }
             } header: {
                 Text("Front camera presets")
@@ -120,12 +86,12 @@ struct ZoomSettingsView: View {
                 ZoomSwitchToSettingsView(
                     name: String(localized: "back"),
                     position: .back,
-                    defaultZoom: model.database.zoom.switchToBack
+                    defaultZoom: zoom.switchToBack
                 )
                 ZoomSwitchToSettingsView(
                     name: String(localized: "front"),
                     position: .front,
-                    defaultZoom: model.database.zoom.switchToFront
+                    defaultZoom: zoom.switchToFront
                 )
             } header: {
                 Text("Camera switching")

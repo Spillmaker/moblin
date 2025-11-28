@@ -9,28 +9,35 @@ struct SnapshotJob {
 extension Model {
     func takeSnapshot(isChatBot: Bool = false, message: String? = nil, noDelay: Bool = false) {
         let age = (isChatBot && !noDelay) ? stream.estimatedViewerDelay : 0.0
-        media.takeSnapshot(age: age) { image, portraitImage in
-            guard let imageJpeg = image.jpegData(compressionQuality: 0.9) else {
+        media.takeSnapshot(age: age) { uiImage, image, portraitImage in
+            guard let imageJpeg = uiImage.jpegData(compressionQuality: 0.9) else {
                 return
             }
             DispatchQueue.main.async {
-                UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+                UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
                 self.makeToast(title: String(localized: "Snapshot saved to Photos"))
                 self.tryUploadSnapshotToDiscord(imageJpeg, message, isChatBot)
                 self.printSnapshotCatPrinters(image: portraitImage)
+                self.appendSnapshotToSnapshotWidgets(image: image)
             }
         }
     }
 
+    private func appendSnapshotToSnapshotWidgets(image: CIImage) {
+        for snapshotEffect in enabledSnapshotEffects {
+            snapshotEffect.appendSnapshot(image: image)
+        }
+    }
+
     private func tryTakeNextSnapshot() {
-        guard currentSnapshotJob == nil else {
+        guard snapshot.currentJob == nil else {
             return
         }
-        currentSnapshotJob = snapshotJobs.popFirst()
-        guard currentSnapshotJob != nil else {
+        snapshot.currentJob = snapshotJobs.popFirst()
+        guard snapshot.currentJob != nil else {
             return
         }
-        snapshotCountdown = 5
+        snapshot.countdown = 5
         snapshotCountdownTick()
     }
 
@@ -48,12 +55,12 @@ extension Model {
 
     private func snapshotCountdownTick() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            self.snapshotCountdown -= 1
-            guard self.snapshotCountdown == 0 else {
+            self.snapshot.countdown -= 1
+            guard self.snapshot.countdown == 0 else {
                 self.snapshotCountdownTick()
                 return
             }
-            guard let snapshotJob = self.currentSnapshotJob else {
+            guard let snapshotJob = self.snapshot.currentJob else {
                 return
             }
             var message = snapshotJob.message
@@ -63,7 +70,7 @@ extension Model {
             }
             self.takeSnapshot(isChatBot: snapshotJob.isChatBot, message: message, noDelay: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-                self.currentSnapshotJob = nil
+                self.snapshot.currentJob = nil
                 self.tryTakeNextSnapshot()
             }
         }
@@ -86,7 +93,6 @@ extension Model {
         guard !stream.discordSnapshotWebhookOnlyWhenLive || isLive, let url = getDiscordWebhookUrl(isChatBot) else {
             return
         }
-        logger.debug("Uploading snapshot to Discord of \(image).")
         uploadImage(
             url: url,
             paramName: "snapshot",
@@ -105,6 +111,6 @@ extension Model {
     }
 
     func setCleanSnapshots() {
-        media.setCleanSnapshots(enabled: stream.recording.cleanSnapshots!)
+        media.setCleanSnapshots(enabled: stream.recording.cleanSnapshots)
     }
 }

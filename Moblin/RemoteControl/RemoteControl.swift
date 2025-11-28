@@ -4,16 +4,22 @@ import Foundation
 
 let remoteControlApiVersion = "0.1"
 
+class RemoteControlStartStatusFilter: Codable {
+    var topRight: Bool = true
+}
+
 enum RemoteControlRequest: Codable {
     case getStatus
     case getSettings
     case setRecord(on: Bool)
     case setStream(on: Bool)
     case setZoom(x: Float)
+    case setZoomPreset(id: UUID)
     case setMute(on: Bool)
     case setTorch(on: Bool)
     case setDebugLogging(on: Bool)
     case setScene(id: UUID)
+    case setAutoSceneSwitcher(id: UUID?)
     case setBitratePreset(id: UUID)
     case setMic(id: String)
     case setSrtConnectionPriority(id: UUID, priority: Int, enabled: Bool)
@@ -27,6 +33,8 @@ enum RemoteControlRequest: Codable {
     case setRemoteSceneData(data: RemoteControlRemoteSceneData)
     case instantReplay
     case saveReplay
+    case startStatus(interval: Int, filter: RemoteControlStartStatusFilter)
+    case stopStatus
 }
 
 enum RemoteControlResponse: Codable {
@@ -42,11 +50,16 @@ enum RemoteControlEvent: Codable {
     case state(data: RemoteControlState)
     case log(entry: String)
     case mediaShareSegmentReceived(fileId: UUID)
+    case status(general: RemoteControlStatusGeneral?,
+                topLeft: RemoteControlStatusTopLeft?,
+                topRight: RemoteControlStatusTopRight?)
 }
 
 struct RemoteControlChatMessage: Codable {
     var id: Int
     var platform: Platform
+    var messageId: String?
+    var displayName: String?
     var user: String?
     var userId: String?
     var userColor: RgbColor?
@@ -56,6 +69,7 @@ struct RemoteControlChatMessage: Codable {
     var isAction: Bool
     var isModerator: Bool
     var isSubscriber: Bool
+    var isOwner: Bool
     var bits: String?
 }
 
@@ -104,23 +118,20 @@ struct RemoteControlRemoteSceneSettingsSceneWidget: Codable {
     var id: UUID
     var x: Double
     var y: Double
-    var width: Double
-    var height: Double
+    var size: Double
 
     init(widget: SettingsSceneWidget) {
         id = widget.widgetId
-        x = widget.x
-        y = widget.y
-        width = widget.width
-        height = widget.height
+        x = widget.layout.x
+        y = widget.layout.y
+        size = widget.layout.size
     }
 
     func toSettings() -> SettingsSceneWidget {
         let widget = SettingsSceneWidget(widgetId: id)
-        widget.x = x
-        widget.y = y
-        widget.width = width
-        widget.height = height
+        widget.layout.x = x
+        widget.layout.y = y
+        widget.layout.size = size
         return widget
     }
 }
@@ -140,8 +151,6 @@ struct RemoteControlRemoteSceneSettingsWidget: Codable {
             return nil
         case .text:
             type = .text(data: RemoteControlRemoteSceneSettingsWidgetTypeText(text: widget.text))
-        case .videoEffect:
-            return nil
         case .crop:
             return nil
         case .map:
@@ -159,6 +168,8 @@ struct RemoteControlRemoteSceneSettingsWidget: Codable {
         case .vTuber:
             return nil
         case .pngTuber:
+            return nil
+        case .snapshot:
             return nil
         }
     }
@@ -197,7 +208,6 @@ struct RemoteControlRemoteSceneSettingsWidgetTypeBrowser: Codable {
     var width: Int
     var height: Int
     var audioOnly: Bool
-    var scaleToFitVideo: Bool
     var fps: Float
     var styleSheet: String
 
@@ -205,10 +215,9 @@ struct RemoteControlRemoteSceneSettingsWidgetTypeBrowser: Codable {
         url = browser.url
         width = browser.width
         height = browser.height
-        audioOnly = browser.audioOnly!
-        scaleToFitVideo = browser.scaleToFitVideo!
-        fps = browser.fps!
-        styleSheet = browser.styleSheet!
+        audioOnly = browser.audioOnly
+        fps = browser.fps
+        styleSheet = browser.styleSheet
     }
 
     func toSettings() -> SettingsWidgetBrowser {
@@ -217,7 +226,6 @@ struct RemoteControlRemoteSceneSettingsWidgetTypeBrowser: Codable {
         browser.width = width
         browser.height = height
         browser.audioOnly = audioOnly
-        browser.scaleToFitVideo = scaleToFitVideo
         browser.fps = fps
         browser.styleSheet = styleSheet
         return browser
@@ -235,7 +243,6 @@ struct RemoteControlRemoteSceneSettingsWidgetTypeText: Codable {
     var fontWeight: SettingsFontWeight
     var fontMonospacedDigits: Bool
     var horizontalAlignment: RemoteControlRemoteSceneSettingsHorizontalAlignment
-    var verticalAlignment: RemoteControlRemoteSceneSettingsVerticalAlignment
     var delay: Double
 
     init(text: SettingsWidgetText) {
@@ -249,7 +256,6 @@ struct RemoteControlRemoteSceneSettingsWidgetTypeText: Codable {
         fontWeight = text.fontWeight
         fontMonospacedDigits = text.fontMonospacedDigits
         horizontalAlignment = .init(alignment: text.horizontalAlignment)
-        verticalAlignment = .init(alignment: text.verticalAlignment)
         delay = text.delay
     }
 
@@ -265,7 +271,6 @@ struct RemoteControlRemoteSceneSettingsWidgetTypeText: Codable {
         text.fontWeight = fontWeight
         text.fontMonospacedDigits = fontMonospacedDigits
         text.horizontalAlignment = horizontalAlignment.toSettings()
-        text.verticalAlignment = verticalAlignment.toSettings()
         text.delay = delay
         return text
     }
@@ -294,34 +299,11 @@ enum RemoteControlRemoteSceneSettingsHorizontalAlignment: Codable {
     }
 }
 
-enum RemoteControlRemoteSceneSettingsVerticalAlignment: Codable {
-    case top
-    case bottom
-
-    init(alignment: SettingsVerticalAlignment) {
-        switch alignment {
-        case .top:
-            self = .top
-        case .bottom:
-            self = .bottom
-        }
-    }
-
-    func toSettings() -> SettingsVerticalAlignment {
-        switch self {
-        case .top:
-            return .top
-        case .bottom:
-            return .bottom
-        }
-    }
-}
-
 struct RemoteControlRemoteSceneSettingsWidgetTypeMap: Codable {
     var northUp: Bool
 
     init(map: SettingsWidgetMap) {
-        northUp = map.northUp!
+        northUp = map.northUp
     }
 
     func toSettings() -> SettingsWidgetMap {
@@ -351,7 +333,10 @@ struct RemoteControlRemoteSceneData: Codable {
 }
 
 struct RemoteControlRemoteSceneDataTextStats: Codable {
+    var bitrate: String
     var bitrateAndTotal: String
+    var resolution: String?
+    var fps: Int?
     var date: Date
     var debugOverlayLines: [String]
     var speed: String
@@ -363,6 +348,7 @@ struct RemoteControlRemoteSceneDataTextStats: Codable {
     var temperature: Measurement<UnitTemperature>?
     var country: String?
     var countryFlag: String?
+    var state: String?
     var city: String?
     var muted: Bool
     var heartRates: [String: Int?]
@@ -379,7 +365,10 @@ struct RemoteControlRemoteSceneDataTextStats: Codable {
     var gForce: GForce?
 
     init(stats: TextEffectStats) {
+        bitrate = stats.bitrate
         bitrateAndTotal = stats.bitrateAndTotal
+        resolution = stats.resolution
+        fps = stats.fps
         date = stats.date
         debugOverlayLines = stats.debugOverlayLines
         speed = stats.speed
@@ -391,6 +380,7 @@ struct RemoteControlRemoteSceneDataTextStats: Codable {
         temperature = stats.temperature
         country = stats.country
         countryFlag = stats.countryFlag
+        state = stats.state
         city = stats.city
         muted = stats.muted
         heartRates = stats.heartRates
@@ -408,7 +398,10 @@ struct RemoteControlRemoteSceneDataTextStats: Codable {
 
     func toStats() -> TextEffectStats {
         return TextEffectStats(timestamp: .now,
+                               bitrate: bitrate,
                                bitrateAndTotal: bitrateAndTotal,
+                               resolution: resolution,
+                               fps: fps,
                                date: date,
                                debugOverlayLines: debugOverlayLines,
                                speed: speed,
@@ -420,6 +413,7 @@ struct RemoteControlRemoteSceneDataTextStats: Codable {
                                temperature: temperature,
                                country: country,
                                countryFlag: countryFlag,
+                               state: state,
                                city: city,
                                muted: muted,
                                heartRates: heartRates,
@@ -532,9 +526,15 @@ struct RemoteControlStatusTopRight: Codable {
     var browserWidgets: RemoteControlStatusItem?
     var moblink: RemoteControlStatusItem?
     var djiDevices: RemoteControlStatusItem?
+    var systemMonitor: RemoteControlStatusItem?
 }
 
 struct RemoteControlSettingsScene: Codable, Identifiable {
+    var id: UUID
+    var name: String
+}
+
+struct RemoteControlSettingsAutoSceneSwitcher: Codable, Identifiable {
     var id: UUID
     var name: String
 }
@@ -563,19 +563,35 @@ struct RemoteControlSettingsSrt: Codable {
 
 struct RemoteControlSettings: Codable {
     var scenes: [RemoteControlSettingsScene]
+    var autoSceneSwitchers: [RemoteControlSettingsAutoSceneSwitcher]?
     var bitratePresets: [RemoteControlSettingsBitratePreset]
     var mics: [RemoteControlSettingsMic]
     var srt: RemoteControlSettingsSrt
 }
 
+struct RemoteControlStateAutoSceneSwitcher: Codable {
+    var id: UUID?
+}
+
+struct RemoteControlZoomPreset: Codable, Identifiable {
+    var id: UUID
+    var name: String
+}
+
 struct RemoteControlState: Codable {
     var scene: UUID?
+    var autoSceneSwitcher: RemoteControlStateAutoSceneSwitcher?
     var mic: String?
     var bitrate: UUID?
     var zoom: Float?
+    var zoomPresets: [RemoteControlZoomPreset]?
+    var zoomPreset: UUID?
     var debugLogging: Bool?
     var streaming: Bool?
     var recording: Bool?
+    var muted: Bool?
+    var torchOn: Bool?
+    var batteryCharging: Bool?
 }
 
 struct RemoteControlAuthentication: Codable {

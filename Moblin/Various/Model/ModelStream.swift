@@ -3,9 +3,57 @@ import Foundation
 import SwiftUI
 import VideoToolbox
 
+private let lowPowerBitrate: UInt32 = 2_000_000
+
+private let iAmLiveWebhookUrl =
+    URL(
+        string: """
+        https://discord.com/api/webhooks/1383532422573985822/\
+        jI3eX5CLADDvhWa93guXttqHCZ_uOalfsYQi2AeYcu6IhFSFw1StNIWPTKTIuFzrWn-q
+        """
+    )!
 let fffffMessage = String(localized: "😢 FFFFF 😢")
 let lowBitrateMessage = String(localized: "Low bitrate")
 let lowBatteryMessage = String(localized: "Low battery")
+
+class CreateStreamWizard: ObservableObject {
+    var platform: WizardPlatform = .custom
+    var networkSetup: WizardNetworkSetup = .none
+    var customProtocol: WizardCustomProtocol = .none
+    let twitchStream = SettingsStream(name: "")
+    var twitchAccessToken = ""
+    var twitchLoggedIn: Bool = false
+    @Published var isPresenting = false
+    @Published var isPresentingSetup = false
+    @Published var showTwitchAuth = false
+    @Published var name = ""
+    @Published var twitchChannelName = ""
+    @Published var twitchChannelId = ""
+    @Published var kickChannelName = ""
+    var kickAccessToken = ""
+    var kickLoggedIn: Bool = false
+    @Published var youTubeHandle = ""
+    @Published var soopChannelName = ""
+    @Published var soopStreamId = ""
+    @Published var obsAddress = ""
+    @Published var obsPort = ""
+    @Published var obsRemoteControlEnabled = false
+    @Published var obsRemoteControlUrl = ""
+    @Published var obsRemoteControlPassword = ""
+    @Published var obsRemoteControlSourceName = ""
+    @Published var obsRemoteControlBrbScene = ""
+    @Published var directIngest = ""
+    @Published var directStreamKey = ""
+    @Published var chatBttv = false
+    @Published var chatFfz = false
+    @Published var chatSeventv = false
+    @Published var belaboxUrl = ""
+    @Published var customSrtUrl = ""
+    @Published var customSrtStreamId = ""
+    @Published var customRtmpUrl = ""
+    @Published var customRtmpStreamKey = ""
+    @Published var customRistUrl = ""
+}
 
 enum StreamState {
     case connecting
@@ -37,7 +85,7 @@ extension Model {
             )
             return
         }
-        if database.location.resetWhenGoingLive! {
+        if database.location.resetWhenGoingLive {
             resetLocationData()
         }
         streamLog.removeAll()
@@ -47,7 +95,8 @@ extension Model {
         streamTotalChatMessages = 0
         updateScreenAutoOff()
         startNetStream()
-        if stream.recording.autoStartRecording! {
+        startFetchingYouTubeChatVideoId()
+        if stream.recording.autoStartRecording {
             startRecording()
         }
         if stream.obsAutoStartStream {
@@ -57,21 +106,22 @@ extension Model {
             obsStartRecording()
         }
         streamingHistoryStream = StreamingHistoryStream(settings: stream.clone())
-        streamingHistoryStream!.updateHighestThermalState(thermalState: ThermalState(from: thermalState))
-        streamingHistoryStream!.updateLowestBatteryLevel(level: batteryLevel)
+        streamingHistoryStream!.updateHighestThermalState(thermalState: ThermalState(from: statusOther.thermalState))
+        streamingHistoryStream!.updateLowestBatteryLevel(level: battery.level)
     }
 
-    func stopStream(stopObsStreamIfEnabled: Bool = true, stopObsRecordingIfEnabled: Bool = true) {
+    func stopStream(stopObsStreamIfEnabled: Bool = true, stopObsRecordingIfEnabled: Bool = true) -> Bool {
         setIsLive(value: false)
         updateScreenAutoOff()
         realtimeIrl?.stop()
+        stopFetchingYouTubeChatVideoId()
         if !streaming {
-            return
+            return false
         }
         logger.info("stream: Stop")
         streamTotalBytes += UInt64(media.streamTotal())
         streaming = false
-        if stream.recording.autoStopRecording! {
+        if stream.recording.autoStopRecording {
             stopRecording()
         }
         if stopObsStreamIfEnabled, stream.obsAutoStopStream {
@@ -81,6 +131,7 @@ extension Model {
             obsStopRecording()
         }
         stopNetStream()
+        makeStreamEndedToast()
         streamState = .disconnected
         if let streamingHistoryStream {
             if let logId = streamingHistoryStream.logId {
@@ -92,97 +143,54 @@ extension Model {
             streamingHistory.append(stream: streamingHistoryStream)
             streamingHistory.store()
         }
+        return true
+    }
+
+    func isGoLiveNotificationConfigured() -> Bool {
+        guard !stream.goLiveNotificationDiscordMessage.isEmpty else {
+            return false
+        }
+        guard !stream.goLiveNotificationDiscordWebhookUrl.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    func sendGoLiveNotification() {
+        media.takeSnapshot(age: 0.0) { image, _, _ in
+            guard let imageJpeg = image.jpegData(compressionQuality: 0.9) else {
+                return
+            }
+            DispatchQueue.main.async {
+                if let url = URL(string: self.stream.goLiveNotificationDiscordWebhookUrl) {
+                    self.tryUploadGoLiveNotificationToDiscord(imageJpeg, url)
+                }
+            }
+        }
+    }
+
+    private func tryUploadGoLiveNotificationToDiscord(_ image: Data, _ url: URL) {
+        uploadImage(
+            url: url,
+            paramName: "snapshot",
+            fileName: "snapshot.jpg",
+            image: image,
+            message: stream.goLiveNotificationDiscordMessage
+        ) { _ in }
     }
 
     private func startNetStream() {
         streamState = .connecting
         latestLowBitrateTime = .now
-        moblinkStreamer?.stopTunnels()
-        if stream.twitchMultiTrackEnabled {
-            startNetStreamMultiTrack()
-        } else {
-            startNetStreamSingleTrack()
-        }
-    }
-
-    private func startNetStreamMultiTrack() {
-        twitchMultiTrackGetClientConfiguration(
-            url: stream.url,
-            dimensions: stream.dimensions(),
-            fps: stream.fps
-        ) { response in
-            DispatchQueue.main.async {
-                self.startNetStreamMultiTrackCompletion(response: response)
-            }
-        }
-    }
-
-    private func startNetStreamMultiTrackCompletion(response: TwitchMultiTrackGetClientConfigurationResponse?) {
-        guard let response else {
-            return
-        }
-        guard let ingestEndpoint = response.ingest_endpoints.first(where: { $0.proto == "RTMP" }) else {
-            return
-        }
-        let url = ingestEndpoint.url_template.replacingOccurrences(
-            of: "{stream_key}",
-            with: ingestEndpoint.authentication
-        )
-        guard let videoEncoderSettings = createMultiTrackVideoCodecSettings(encoderConfigurations: response
-            .encoder_configurations)
-        else {
-            return
-        }
-        media.rtmpMultiTrackStartStream(url, videoEncoderSettings)
-        updateSpeed(now: .now)
-    }
-
-    private func createMultiTrackVideoCodecSettings(
-        encoderConfigurations: [TwitchMultiTrackGetClientConfigurationEncoderContiguration]
-    )
-        -> [VideoEncoderSettings]?
-    {
-        var videoEncoderSettings: [VideoEncoderSettings] = []
-        for encoderConfiguration in encoderConfigurations {
-            var settings = VideoEncoderSettings()
-            let bitrate = encoderConfiguration.settings.bitrate
-            guard bitrate >= 100, bitrate <= 50000 else {
-                return nil
-            }
-            settings.bitRate = bitrate * 1000
-            let width = encoderConfiguration.width
-            let height = encoderConfiguration.height
-            guard width >= 1, width <= 5000 else {
-                return nil
-            }
-            guard height >= 1, height <= 5000 else {
-                return nil
-            }
-            settings.videoSize = CMVideoDimensions(width: width, height: height)
-            settings.maxKeyFrameIntervalDuration = encoderConfiguration.settings.keyint_sec
-            settings.allowFrameReordering = encoderConfiguration.settings.bframes
-            let codec = encoderConfiguration.type
-            let profile = encoderConfiguration.settings.profile
-            if codec.hasSuffix("avc"), profile == "main" {
-                settings.profileLevel = kVTProfileLevel_H264_Main_AutoLevel as String
-            } else if codec.hasSuffix("avc"), profile == "high" {
-                settings.profileLevel = kVTProfileLevel_H264_High_AutoLevel as String
-            } else if codec.hasSuffix("hevc"), profile == "main" {
-                settings.profileLevel = kVTProfileLevel_HEVC_Main_AutoLevel as String
-            } else {
-                logger.error("Unsupported multi track codec and profile combination: \(codec) \(profile)")
-                return nil
-            }
-            videoEncoderSettings.append(settings)
-        }
-        return videoEncoderSettings
+        moblink.streamer?.stopTunnels()
+        startNetStreamSingleTrack()
     }
 
     private func startNetStreamSingleTrack() {
         switch stream.getProtocol() {
         case .rtmp:
             media.rtmpStartStream(url: stream.url,
-                                  targetBitrate: stream.bitrate,
+                                  targetBitrate: getBitrate(),
                                   adaptiveBitrate: stream.rtmp.adaptiveBitrateEnabled)
             updateAdaptiveBitrateRtmpIfEnabled()
         case .srt:
@@ -191,33 +199,32 @@ extension Model {
                 isSrtla: stream.isSrtla(),
                 url: stream.url,
                 reconnectTime: 5,
-                targetBitrate: stream.bitrate,
-                adaptiveBitrateAlgorithm: stream.srt.adaptiveBitrateEnabled! ? stream.srt.adaptiveBitrate!
-                    .algorithm : nil,
+                targetBitrate: getBitrate(),
+                adaptiveBitrateAlgorithm: stream.srt.adaptiveBitrateEnabled
+                    ? stream.srt.adaptiveBitrate.algorithm
+                    : nil,
                 latency: stream.srt.latency,
                 overheadBandwidth: database.debug.srtOverheadBandwidth,
                 maximumBandwidthFollowInput: database.debug.maximumBandwidthFollowInput,
                 mpegtsPacketsPerPacket: stream.srt.mpegtsPacketsPerPacket,
                 networkInterfaceNames: database.networkInterfaceNames,
-                connectionPriorities: stream.srt.connectionPriorities!,
-                dnsLookupStrategy: stream.srt.dnsLookupStrategy!
+                connectionPriorities: stream.srt.connectionPriorities,
+                dnsLookupStrategy: stream.srt.dnsLookupStrategy
             )
             updateAdaptiveBitrateSrt(stream: stream)
         case .rist:
             media.ristStartStream(url: stream.url,
                                   bonding: stream.rist.bonding,
-                                  targetBitrate: stream.bitrate,
+                                  targetBitrate: getBitrate(),
                                   adaptiveBitrate: stream.rist.adaptiveBitrateEnabled)
             updateAdaptiveBitrateRistIfEnabled()
-        case .irl:
-            media.irlStartStream()
         }
         updateSpeed(now: .now)
     }
 
-    private func stopNetStream(reconnect: Bool = false) {
-        moblinkStreamer?.stopTunnels()
-        reconnectTimer?.invalidate()
+    private func stopNetStream() {
+        moblink.streamer?.stopTunnels()
+        reconnectTimer.stop()
         media.rtmpStopStream()
         media.srtStopStream()
         media.ristStopStream()
@@ -225,19 +232,19 @@ extension Model {
         updateStreamUptime(now: .now)
         updateSpeed(now: .now)
         updateAudioLevel()
-        bondingStatistics = noValue
-        if !reconnect {
-            makeStreamEndedToast()
-        }
+        bonding.statistics = noValue
     }
 
     func setCurrentStream(stream: SettingsStream) {
+        self.stream = stream
         stream.enabled = true
         for ostream in database.streams where ostream.id != stream.id {
             ostream.enabled = false
         }
         currentStreamId = stream.id
         updateOrientationLock()
+        updateStatusStreamText()
+        reloadCameraLevel()
     }
 
     func setCurrentStream(streamId: UUID) -> Bool {
@@ -246,6 +253,10 @@ extension Model {
         }
         setCurrentStream(stream: stream)
         return true
+    }
+
+    func setCurrentStream() {
+        setCurrentStream(stream: database.streams.first(where: { $0.enabled }) ?? fallbackStream)
     }
 
     func findStream(id: UUID) -> SettingsStream? {
@@ -257,27 +268,27 @@ extension Model {
     func reloadStream() {
         cameraPosition = nil
         stopRecorderIfNeeded(forceStop: true)
-        stopStream()
+        _ = stopStream()
         setNetStream()
         setStreamResolution()
         setStreamFps()
-        setStreamPreferAutoFps()
         setColorSpace()
         setStreamCodec()
         setStreamAdaptiveResolution()
         setStreamKeyFrameInterval()
         setStreamBitrate(stream: stream)
         setAudioStreamBitrate(stream: stream)
-        setAudioStreamFormat(format: .aac)
+        setAudioStreamFormat(format: stream.audioCodec.toEncoder())
         setAudioChannelsMap(channelsMap: [
-            0: database.audio.audioOutputToInputChannelsMap!.channel1,
-            1: database.audio.audioOutputToInputChannelsMap!.channel2,
+            0: database.audio.audioOutputToInputChannelsMap.channel1,
+            1: database.audio.audioOutputToInputChannelsMap.channel2,
         ])
         startRecorderIfNeeded()
         reloadConnections()
         resetChat()
         reloadLocation()
         reloadRtmpStreams()
+        updateStatusStreamText()
     }
 
     func reloadStreamIfEnabled(stream: SettingsStream) {
@@ -294,7 +305,9 @@ extension Model {
             proto: stream.getProtocol(),
             portrait: stream.portrait,
             timecodesEnabled: isTimecodesEnabled(),
-            builtinAudioDelay: database.debug.builtinAudioAndVideoDelay
+            builtinAudioDelay: database.debug.builtinAudioAndVideoDelay,
+            destinations: stream.multiStreaming.destinations,
+            newSrt: database.debug.newSrt
         )
         updateTorch()
         updateMute()
@@ -308,55 +321,74 @@ extension Model {
     }
 
     private func attachStream() {
-        guard let stream = media.getNetStream() else {
-            currentStream = nil
+        guard let processor = media.getProcessor() else {
+            processor = nil
             return
         }
-        netStreamLockQueue.async {
-            stream.mixer.video.drawable = self.streamPreviewView
-            stream.mixer.video.externalDisplayDrawable = self.externalDisplayStreamPreviewView
-            self.currentStream = stream
-            stream.mixer.startRunning()
+        processorControlQueue.async {
+            processor.setDrawable(drawable: self.streamPreviewView)
+            processor.setExternalDisplayDrawable(drawable: self.externalDisplayStreamPreviewView)
+            self.processor = processor
+            processor.startRunning()
         }
     }
 
-    private func setStreamResolution() {
+    func setStreamResolution() {
+        let resolution: SettingsStreamResolution
+        if stream.recording.overrideStream {
+            if stream.recording.resolution > stream.resolution {
+                resolution = stream.recording.resolution
+            } else {
+                resolution = stream.resolution
+            }
+        } else {
+            resolution = stream.resolution
+        }
         var captureSize: CGSize
-        var outputSize: CGSize
-        switch stream.resolution {
+        switch resolution {
+        case .r4032x3024:
+            captureSize = .init(width: 4032, height: 3024)
         case .r3840x2160:
             captureSize = .init(width: 3840, height: 2160)
-            outputSize = .init(width: 3840, height: 2160)
         case .r2560x1440:
             // Use 4K camera and downscale to 1440p.
             captureSize = .init(width: 3840, height: 2160)
-            outputSize = .init(width: 2560, height: 1440)
+        case .r1920x1440:
+            captureSize = .init(width: 1920, height: 1440)
         case .r1920x1080:
             captureSize = .init(width: 1920, height: 1080)
-            outputSize = .init(width: 1920, height: 1080)
+        case .r1024x768:
+            captureSize = .init(width: 1024, height: 768)
         case .r1280x720:
             captureSize = .init(width: 1280, height: 720)
-            outputSize = .init(width: 1280, height: 720)
+        case .r960x540:
+            captureSize = .init(width: 960, height: 540)
         case .r854x480:
-            captureSize = .init(width: 1280, height: 720)
-            outputSize = .init(width: 854, height: 480)
+            // Use 540p camera and downscale to 480p.
+            captureSize = .init(width: 960, height: 540)
         case .r640x360:
-            captureSize = .init(width: 1280, height: 720)
-            outputSize = .init(width: 640, height: 360)
+            // Use 540p camera and downscale to 360p.
+            captureSize = .init(width: 960, height: 540)
         case .r426x240:
-            captureSize = .init(width: 1280, height: 720)
-            outputSize = .init(width: 426, height: 240)
+            // Use 540p camera and downscale to 240p.
+            captureSize = .init(width: 960, height: 540)
         }
-        if stream.portrait {
-            outputSize = .init(width: outputSize.height, height: outputSize.width)
-        }
-        media.setVideoSize(capture: captureSize, output: outputSize)
+        media.setVideoSize(capture: captureSize,
+                           canvas: resolution.dimensions(portrait: stream.portrait).toSize(),
+                           stream: stream.resolution.dimensions(portrait: stream.portrait))
     }
 
     private func setStreamCodec() {
         switch stream.codec {
         case .h264avc:
-            media.setVideoProfile(profile: kVTProfileLevel_H264_Main_AutoLevel)
+            switch stream.h264Profile {
+            case .baseline:
+                media.setVideoProfile(profile: kVTProfileLevel_H264_Baseline_AutoLevel)
+            case .main:
+                media.setVideoProfile(profile: kVTProfileLevel_H264_Main_AutoLevel)
+            case .high:
+                media.setVideoProfile(profile: kVTProfileLevel_H264_High_AutoLevel)
+            }
         case .h265hevc:
             if database.color.space == .hlgBt2020 {
                 media.setVideoProfile(profile: kVTProfileLevel_HEVC_Main10_AutoLevel)
@@ -400,8 +432,8 @@ extension Model {
         makeToast(title: String(localized: "🎉 You are LIVE at \(stream.name) 🎉"))
     }
 
-    private func makeStreamEndedToast() {
-        makeToast(title: String(localized: "🤟 Stream ended 🤟"))
+    func makeStreamEndedToast(subTitle: String? = nil, onTapped: (() -> Void)? = nil) {
+        makeToast(title: String(localized: "🤟 Stream ended 🤟"), subTitle: subTitle, onTapped: onTapped)
     }
 
     private func makeConnectFailureToast(subTitle: String) {
@@ -440,12 +472,11 @@ extension Model {
             makeConnectFailureToast(subTitle: subTitle)
         }
         streamState = .disconnected
-        stopNetStream(reconnect: true)
-        reconnectTimer = Timer
-            .scheduledTimer(withTimeInterval: 5, repeats: false) { _ in
-                logger.info("stream: Reconnecting")
-                self.startNetStream()
-            }
+        stopNetStream()
+        reconnectTimer.startSingleShot(timeout: 5) {
+            logger.info("stream: Reconnecting")
+            self.startNetStream()
+        }
     }
 
     private func handleSrtConnected() {
@@ -464,6 +495,15 @@ extension Model {
         onDisconnected(reason: "RTMP disconnected with message \(message)")
     }
 
+    private func handleRtmpDestinationConnected(destination: String) {
+        makeToast(title: String(localized: "🎉 You are LIVE at multi stream \(destination) 🎉"))
+    }
+
+    private func handleRtmpDestinationDisconnected(destination: String) {
+        makeErrorToast(title: String(localized: "😢 Multi stream \(destination) failed 😢"),
+                       subTitle: String(localized: "Attempting again in 5 seconds."))
+    }
+
     private func handleRistConnected() {
         DispatchQueue.main.async {
             self.onConnected()
@@ -478,7 +518,7 @@ extension Model {
 
     private func handleAudioBuffer(sampleBuffer: CMSampleBuffer) {
         DispatchQueue.main.async {
-            self.speechToText.append(sampleBuffer: sampleBuffer)
+            self.speechToText?.append(sampleBuffer: sampleBuffer)
         }
     }
 
@@ -493,16 +533,16 @@ extension Model {
                 return
             }
         }
-        if bondingStatistics != noValue {
-            bondingStatistics = noValue
+        if bonding.statistics != noValue {
+            bonding.statistics = noValue
         }
     }
 
     private func handleBondingStatistics(connections: [BondingConnection]) {
-        if let (message, rtts, percentages) = bondingStatisticsFormatter.format(connections) {
-            bondingStatistics = message
-            bondingRtts = rtts
-            bondingPieChartPercentages = percentages
+        if let (message, rtts, percentages) = bonding.statisticsFormatter.format(connections) {
+            bonding.statistics = message
+            bonding.rtts = rtts
+            bonding.pieChartPercentages = percentages
         }
     }
 
@@ -511,10 +551,23 @@ extension Model {
             let speed = Int64(media.getVideoStreamBitrate(bitrate: stream.bitrate))
             checkLowBitrate(speed: speed, now: now)
             streamingHistoryStream?.updateBitrate(bitrate: speed)
-            speedMbpsOneDecimal = String(format: "%.1f", Double(speed) / 1_000_000)
+            let speedMbpsOneDecimal = String(format: "%.1f", Double(speed) / 1_000_000)
+            if speedMbpsOneDecimal != bitrate.speedMbpsOneDecimal {
+                bitrate.speedMbpsOneDecimal = speedMbpsOneDecimal
+            }
             let speedString = formatBytesPerSecond(speed: speed)
             let total = sizeFormatter.string(fromByteCount: media.streamTotal())
-            speedAndTotal = String(localized: "\(speedString) (\(total))")
+            let numberOfDestinations = media.getNumberOfDestinations()
+            let speedAndTotal: String
+            if numberOfDestinations == 1 {
+                speedAndTotal = String(localized: "\(speedString) (\(total))")
+            } else {
+                speedAndTotal = String(localized: "\(speedString) x\(numberOfDestinations) (\(total))")
+            }
+            if speedAndTotal != bitrate.speedAndTotal {
+                bitrate.speedAndTotal = speedAndTotal
+            }
+            let bitrateStatusIconColor: Color?
             if speed < stream.bitrate / 5 {
                 bitrateStatusIconColor = .red
             } else if speed < stream.bitrate / 2 {
@@ -522,14 +575,17 @@ extension Model {
             } else {
                 bitrateStatusIconColor = nil
             }
-            if isWatchLocal() {
-                sendSpeedAndTotalToWatch(speedAndTotal: speedAndTotal)
+            if bitrateStatusIconColor != bitrate.statusIconColor {
+                bitrate.statusIconColor = bitrateStatusIconColor
             }
-        } else if speedAndTotal != noValue {
-            speedMbpsOneDecimal = noValue
-            speedAndTotal = noValue
             if isWatchLocal() {
-                sendSpeedAndTotalToWatch(speedAndTotal: speedAndTotal)
+                sendSpeedAndTotalToWatch(speedAndTotal: bitrate.speedAndTotal)
+            }
+        } else if bitrate.speedAndTotal != noValue {
+            bitrate.speedMbpsOneDecimal = noValue
+            bitrate.speedAndTotal = noValue
+            if isWatchLocal() {
+                sendSpeedAndTotalToWatch(speedAndTotal: bitrate.speedAndTotal)
             }
         }
     }
@@ -544,7 +600,7 @@ extension Model {
     }
 
     func updateSrtlaPriorities() {
-        media.setConnectionPriorities(connectionPriorities: stream.srt.connectionPriorities!.clone())
+        media.setConnectionPriorities(connectionPriorities: stream.srt.connectionPriorities.clone())
     }
 
     private func checkLowBitrate(speed: Int64, now: ContinuousClock.Instant) {
@@ -589,11 +645,64 @@ extension Model {
         makeErrorToastMain(title: message, subTitle: videoCaptureError())
     }
 
+    private func handleEncoderResolutionChanged(resolution: CGSize) {
+        let dimension = Int(resolution.minimum())
+        if dimension == 2160 {
+            currentResolution = "4K"
+        } else {
+            currentResolution = "\(dimension)p"
+        }
+        updateStatusStreamText()
+    }
+
+    private func handleBufferedVideoReady(cameraId: UUID) {
+        activeBufferedVideoIds.insert(cameraId)
+        var isNetwork = false
+        if let stream = getRtmpStream(id: cameraId) {
+            isNetwork = true
+            stream.connected = true
+        } else if let stream = getSrtlaStream(id: cameraId) {
+            isNetwork = true
+            stream.connected = true
+        } else if let stream = getRistStream(id: cameraId) {
+            isNetwork = true
+            stream.connected = true
+        }
+        if isNetwork {
+            markMicAsConnected(id: "\(cameraId) 0")
+            switchMicIfNeededAfterNetworkCameraChange()
+        }
+        updateDisconnectProtectionVideoSourceConnected()
+    }
+
+    private func handleBufferedVideoRemoved(cameraId: UUID) {
+        activeBufferedVideoIds.remove(cameraId)
+        var isNetwork = false
+        if let stream = getRtmpStream(id: cameraId) {
+            isNetwork = true
+            stream.connected = false
+        } else if let stream = getSrtlaStream(id: cameraId) {
+            isNetwork = true
+            stream.connected = false
+        } else if let stream = getRistStream(id: cameraId) {
+            isNetwork = true
+            stream.connected = false
+        }
+        if isNetwork {
+            markMicAsDisconnected(id: "\(cameraId) 0")
+            switchMicIfNeededAfterNetworkCameraChange()
+            if isCurrentScenesVideoSourceNetwork(cameraId: cameraId) {
+                updateAutoSceneSwitcherVideoSourceDisconnected()
+            }
+        }
+        updateDisconnectProtectionVideoSourceDisconnected()
+    }
+
     private func handleRecorderFinished() {}
 
     private func handleNoTorch() {
         DispatchQueue.main.async { [self] in
-            if !isFrontCameraSelected {
+            if !streamOverlay.isFrontCameraSelected {
                 makeErrorToast(
                     title: String(localized: "Torch unavailable in this scene."),
                     subTitle: String(localized: "Normally only available for built-in cameras.")
@@ -602,9 +711,16 @@ extension Model {
         }
     }
 
+    private func handleFps(fps: Int) {
+        DispatchQueue.main.async { [self] in
+            self.currentFps = fps
+            self.updateStatusStreamText()
+        }
+    }
+
     func toggleStream() {
         if isLive {
-            stopStream()
+            _ = stopStream()
         } else {
             startStream()
         }
@@ -618,16 +734,13 @@ extension Model {
         remoteControlStreamer?.stateChanged(state: RemoteControlState(streaming: isLive))
     }
 
-    func setStreamFps() {
-        media.setStreamFps(fps: stream.fps)
-    }
-
-    func setStreamPreferAutoFps() {
-        media.setStreamPreferAutoFps(value: stream.autoFps)
+    func setStreamFps(fps: Int? = nil) {
+        media.setFps(fps: fps ?? stream.fps, preferAutoFps: stream.autoFps)
     }
 
     func setStreamBitrate(stream: SettingsStream) {
         media.setVideoStreamBitrate(bitrate: stream.bitrate)
+        updateStatusStreamText()
     }
 
     func getBitratePresetByBitrate(bitrate: UInt32) -> SettingsBitratePreset? {
@@ -649,12 +762,18 @@ extension Model {
         remoteControlStreamer?.stateChanged(state: RemoteControlState(bitrate: preset.id))
     }
 
+    private func getBitrate() -> UInt32 {
+        return statusTopRight.isLowPowerMode ? lowPowerBitrate : stream.bitrate
+    }
+
     func setAudioStreamBitrate(stream: SettingsStream) {
         media.setAudioStreamBitrate(bitrate: stream.audioBitrate)
+        updateStatusStreamText()
     }
 
     func setAudioStreamFormat(format: AudioEncoderSettings.Format) {
         media.setAudioStreamFormat(format: format)
+        updateStatusStreamText()
     }
 
     func setAudioChannelsMap(channelsMap: [Int: Int]) {
@@ -678,14 +797,17 @@ extension Model {
         } else {
             newBitrateStatusColor = .white
         }
-        if newBitrateStatusColor != bitrateStatusColor {
-            bitrateStatusColor = newBitrateStatusColor
+        if newBitrateStatusColor != bitrate.statusColor {
+            bitrate.statusColor = newBitrateStatusColor
         }
     }
 
     func updateAdaptiveBitrate() {
+        guard streaming else {
+            return
+        }
         if let (lines, actions) = media.updateAdaptiveBitrate(
-            overlay: database.debug.srtOverlay,
+            overlay: database.debug.debugOverlay,
             relaxed: relaxedBitrate
         ) {
             latestDebugLines = lines
@@ -693,8 +815,8 @@ extension Model {
         }
     }
 
-    func updateAdaptiveBitrateDebug() {
-        if database.debug.srtOverlay {
+    func updateDebugOverlay() {
+        if database.debug.debugOverlay {
             debugOverlay.debugLines = latestDebugLines + latestDebugActions
             if logger.debugEnabled, isLive {
                 logger.debug(latestDebugLines.joined(separator: ", "))
@@ -731,6 +853,14 @@ extension Model: MediaDelegate {
         handleRtmpDisconnected(message: message)
     }
 
+    func mediaOnRtmpDestinationConnected(_ destination: String) {
+        handleRtmpDestinationConnected(destination: destination)
+    }
+
+    func mediaOnRtmpDestinationDisconnected(_ destination: String) {
+        handleRtmpDestinationDisconnected(destination: destination)
+    }
+
     func mediaOnRistConnected() {
         handleRistConnected()
     }
@@ -763,6 +893,24 @@ extension Model: MediaDelegate {
         handleCaptureSessionError(message: message)
     }
 
+    func mediaOnBufferedVideoReady(cameraId: UUID) {
+        DispatchQueue.main.async {
+            self.handleBufferedVideoReady(cameraId: cameraId)
+        }
+    }
+
+    func mediaOnBufferedVideoRemoved(cameraId: UUID) {
+        DispatchQueue.main.async {
+            self.handleBufferedVideoRemoved(cameraId: cameraId)
+        }
+    }
+
+    func mediaOnEncoderResolutionChanged(resolution: CGSize) {
+        DispatchQueue.main.async {
+            self.handleEncoderResolutionChanged(resolution: resolution)
+        }
+    }
+
     func mediaOnRecorderInitSegment(data: Data) {
         handleRecorderInitSegment(data: data)
     }
@@ -779,8 +927,12 @@ extension Model: MediaDelegate {
         handleNoTorch()
     }
 
+    func mediaOnFps(fps: Int) {
+        handleFps(fps: fps)
+    }
+
     func mediaStrlaRelayDestinationAddress(address: String, port: UInt16) {
-        moblinkStreamer?.startTunnels(address: address, port: port)
+        moblink.streamer?.startTunnels(address: address, port: port)
     }
 
     func mediaSetZoomX(x: Float) {
@@ -791,10 +943,10 @@ extension Model: MediaDelegate {
         setExposureBias(bias: bias)
     }
 
-    func mediaSelectedFps(fps: Double, auto: Bool) {
+    func mediaSelectedFps(auto: Bool) {
         DispatchQueue.main.async {
-            self.selectedFps = Int(fps)
             self.autoFps = auto
+            self.updateStatusStreamText()
         }
     }
 
@@ -804,8 +956,5 @@ extension Model: MediaDelegate {
 }
 
 private func videoCaptureError() -> String {
-    return [
-        String(localized: "Try to use single or low-energy cameras."),
-        String(localized: "Try to lower stream FPS and resolution."),
-    ].joined(separator: "\n")
+    return String(localized: "Try to use single or low-energy cameras.")
 }

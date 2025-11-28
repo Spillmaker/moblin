@@ -1,25 +1,35 @@
 import Foundation
 import Network
 
+class Moblink: ObservableObject {
+    var streamer: MoblinkStreamer?
+    var relays: [MoblinkRelay] = []
+    var scanner: MoblinkScanner?
+    var relayState: MoblinkRelayState = .waitingForStreamers
+    @Published var streamerOk = true
+    @Published var status = noValue
+    @Published var scannerDiscoveredStreamers: [MoblinkScannerStreamer] = []
+}
+
 extension Model {
     func stopMoblinkStreamer() {
-        moblinkStreamer?.stop()
-        moblinkStreamer = nil
+        moblink.streamer?.stop()
+        moblink.streamer = nil
     }
 
     func reloadMoblinkStreamer() {
         stopMoblinkStreamer()
         if isMoblinkStreamerConfigured() {
-            moblinkStreamer = MoblinkStreamer(
-                port: database.moblink.server.port,
+            moblink.streamer = MoblinkStreamer(
+                port: database.moblink.streamer.port,
                 password: database.moblink.password
             )
-            moblinkStreamer?.start(delegate: self)
+            moblink.streamer?.start(delegate: self)
         }
     }
 
     func isMoblinkStreamerConfigured() -> Bool {
-        let server = database.moblink.server
+        let server = database.moblink.streamer
         return server.enabled && server.port > 0 && !database.moblink.password.isEmpty
     }
 
@@ -28,7 +38,7 @@ extension Model {
         stopMoblinkScanner()
         if isMoblinkRelayConfigured() {
             reloadMoblinkScanner()
-            if database.moblink.client.manual {
+            if database.moblink.relay.manual {
                 startMoblinkRelayManual()
             } else {
                 startMoblinkRelayAutomatic()
@@ -37,14 +47,14 @@ extension Model {
     }
 
     private func startMoblinkRelayManual() {
-        guard let streamerUrl = URL(string: database.moblink.client.url) else {
+        guard let streamerUrl = URL(string: database.moblink.relay.url) else {
             return
         }
         addMoblinkRelay(streamerUrl: streamerUrl)
     }
 
     private func startMoblinkRelayAutomatic() {
-        for streamer in moblinkScannerDiscoveredStreamers {
+        for streamer in moblink.scannerDiscoveredStreamers {
             guard let url = streamer.urls.first, let streamerUrl = URL(string: url) else {
                 return
             }
@@ -53,25 +63,25 @@ extension Model {
     }
 
     private func addMoblinkRelay(streamerUrl: URL) {
-        guard !moblinkRelays.contains(where: { $0.streamerUrl == streamerUrl }) else {
+        guard !moblink.relays.contains(where: { $0.streamerUrl == streamerUrl }) else {
             return
         }
         guard !isMoblinkRelayOnThisDevice(streamerUrl: streamerUrl) else {
+            logger.info("Not adding Moblink relay to ourselves: \(streamerUrl)")
             return
         }
-        // logger.info("xxx relay \(streamerUrl)")
         let relay = MoblinkRelay(
-            name: database.moblink.client.name,
+            name: database.moblink.relay.name,
             streamerUrl: streamerUrl,
             password: database.moblink.password,
             delegate: self
         )
         relay.start()
-        moblinkRelays.append(relay)
+        moblink.relays.append(relay)
     }
 
     func isMoblinkRelayConfigured() -> Bool {
-        let client = database.moblink.client
+        let client = database.moblink.relay
         if !client.enabled {
             return false
         }
@@ -83,39 +93,44 @@ extension Model {
     }
 
     func areMoblinkRelaysOk() -> Bool {
-        return moblinkRelayState == .connected || moblinkRelayState == .waitingForStreamers
+        return moblink.relayState == .connected || moblink.relayState == .waitingForStreamers
     }
 
     func moblinkIpStatusesUpdated() {
-        // logger.info("xxx statuses")
-        // for status in ipStatuses {
-        //     logger.info("xxx   status \(status)")
-        // }
+        var toRemove: IndexSet = []
+        for (index, relay) in moblink.relays.enumerated()
+            where isMoblinkRelayOnThisDevice(streamerUrl: relay.streamerUrl)
+        {
+            logger.info("Removing Moblink relay as it is connected to ourselves.")
+            relay.stop()
+            toRemove.insert(index)
+        }
+        moblink.relays.remove(atOffsets: toRemove)
     }
 
-    private func isMoblinkRelayOnThisDevice(streamerUrl _: URL) -> Bool {
-        // logger.info("xxx is on this device \(streamerUrl)")
-        return false
+    private func isMoblinkRelayOnThisDevice(streamerUrl: URL) -> Bool {
+        let host = streamerUrl.host()
+        return statusOther.ipStatuses.contains(where: { $0.ipType.formatAddress($0.ip) == host })
     }
 
     func stopMoblinkRelay() {
-        for relay in moblinkRelays {
+        for relay in moblink.relays {
             relay.stop()
         }
-        moblinkRelays.removeAll()
+        moblink.relays.removeAll()
         stopMoblinkScanner()
     }
 
     func reloadMoblinkScanner() {
         stopMoblinkScanner()
-        moblinkScanner = MoblinkScanner(delegate: self)
-        moblinkScanner?.start()
+        moblink.scanner = MoblinkScanner(delegate: self)
+        moblink.scanner?.start()
     }
 
     func stopMoblinkScanner() {
-        moblinkScanner?.stop()
-        moblinkScanner = nil
-        moblinkScannerDiscoveredStreamers.removeAll()
+        moblink.scanner?.stop()
+        moblink.scanner = nil
+        moblink.scannerDiscoveredStreamers.removeAll()
     }
 
     func updateMoblinkStatus() {
@@ -123,10 +138,10 @@ extension Model {
         var serverOk = true
         if isMoblinkRelayConfigured(), isMoblinkStreamerConfigured() {
             let (serverStatus, ok) = moblinkStreamerStatus()
-            status = "\(serverStatus), \(moblinkRelayState.rawValue)"
+            status = "\(serverStatus), \(moblink.relayState.rawValue)"
             serverOk = ok
         } else if isMoblinkRelayConfigured() {
-            status = moblinkRelayState.rawValue
+            status = moblink.relayState.rawValue
         } else if isMoblinkStreamerConfigured() {
             let (serverStatus, ok) = moblinkStreamerStatus()
             status = serverStatus
@@ -134,22 +149,24 @@ extension Model {
         } else {
             status = noValue
         }
-        if status != moblinkStatus {
-            moblinkStatus = status
+        if status != moblink.status {
+            moblink.status = status
         }
-        if serverOk != moblinkStreamerOk {
-            moblinkStreamerOk = serverOk
+        if serverOk != moblink.streamerOk {
+            moblink.streamerOk = serverOk
         }
     }
 
     private func moblinkStreamerStatus() -> (String, Bool) {
-        guard let moblinkStreamer else {
+        guard let streamer = moblink.streamer else {
             return ("", true)
         }
         var statuses: [String] = []
         var ok = true
-        for (name, batteryPercentage) in moblinkStreamer.getStatuses() {
-            let (status, deviceOk) = formatDeviceStatus(name: name, batteryPercentage: batteryPercentage)
+        for (name, batteryPercentage, thermalState) in streamer.getStatuses() {
+            let (status, deviceOk) = formatDeviceStatus(name: name,
+                                                        batteryPercentage: batteryPercentage,
+                                                        thermalState: thermalState)
             if !deviceOk {
                 ok = false
             }
@@ -161,7 +178,7 @@ extension Model {
 
 extension Model: MoblinkStreamerDelegate {
     func moblinkStreamerTunnelAdded(endpoint: Network.NWEndpoint, relayId: UUID, relayName: String) {
-        let connectionPriorities = stream.srt.connectionPriorities!
+        let connectionPriorities = stream.srt.connectionPriorities
         if let priority = connectionPriorities.priorities.first(where: { $0.relayId == relayId }) {
             priority.name = relayName
         } else {
@@ -179,19 +196,29 @@ extension Model: MoblinkStreamerDelegate {
 
 extension Model: MoblinkRelayDelegate {
     func moblinkRelayNewState(state: MoblinkRelayState) {
-        moblinkRelayState = state
+        moblink.relayState = state
     }
 
-    func moblinkRelayGetBatteryPercentage() -> Int {
-        return Int(100 * batteryLevel)
+    func moblinkRelayGetStatus() -> (Int?, MoblinkThermalState?) {
+        let thermalState: MoblinkThermalState?
+        switch statusOther.thermalState {
+        case .nominal, .fair:
+            thermalState = .white
+        case .serious:
+            thermalState = .yellow
+        case .critical:
+            thermalState = .red
+        @unknown default:
+            thermalState = nil
+        }
+        return (Int(100 * battery.level), thermalState)
     }
 }
 
 extension Model: MoblinkScannerDelegate {
     func moblinkScannerDiscoveredStreamers(streamers: [MoblinkScannerStreamer]) {
-        // logger.info("xxx xxx \(streamers)")
-        moblinkScannerDiscoveredStreamers = streamers
-        if !database.moblink.client.manual {
+        moblink.scannerDiscoveredStreamers = streamers
+        if !database.moblink.relay.manual {
             startMoblinkRelayAutomatic()
         }
     }

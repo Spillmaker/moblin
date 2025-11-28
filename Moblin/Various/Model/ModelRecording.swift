@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 class RecordingProvider: ObservableObject {
@@ -7,38 +8,41 @@ class RecordingProvider: ObservableObject {
 extension Model {
     func startRecording() {
         setIsRecording(value: true)
-        var subTitle: String?
-        if recordingsStorage.isFull() {
-            subTitle = String(localized: "Too many recordings. Deleting oldest recording.")
+        if !resumeRecording() {
+            if stream.recording.isDefaultRecordingPath() {
+                makeErrorToast(title: String(localized: "Failed to start recording"))
+            } else {
+                makeErrorToast(title: String(localized: "Failed to start recording"),
+                               subTitle: String(localized: "Is the disk connected?"))
+            }
+            setIsRecording(value: false)
         }
-        makeToast(title: String(localized: "Recording started"), subTitle: subTitle)
-        resumeRecording()
     }
 
-    func stopRecording(showToast: Bool = true, toastTitle: String? = nil, toastSubTitle: String? = nil) {
+    func stopRecording(toastTitle: String? = nil, toastSubTitle: String? = nil) {
         guard isRecording else {
             return
         }
         setIsRecording(value: false)
-        if showToast {
-            makeToast(title: toastTitle ?? String(localized: "Recording stopped"), subTitle: toastSubTitle)
+        if let toastTitle {
+            makeToast(title: toastTitle, subTitle: toastSubTitle)
         }
         media.setRecordUrl(url: nil)
         suspendRecording()
     }
 
-    func resumeRecording() {
-        currentRecording = recordingsStorage.createRecording(settings: stream.clone())
+    func resumeRecording() -> Bool {
+        currentRecording = recordingsStorage.createRecording(recording: stream.recording.clone())
+        if currentRecording == nil {
+            return false
+        }
         media.setRecordUrl(url: currentRecording?.url())
         startRecorderIfNeeded()
+        return true
     }
 
     func suspendRecording() {
         stopRecorderIfNeeded()
-        if let currentRecording {
-            recordingsStorage.append(recording: currentRecording)
-            recordingsStorage.store()
-        }
         updateRecordingLength(now: Date())
         currentRecording = nil
     }
@@ -53,7 +57,7 @@ extension Model {
         isRecorderRecording = true
         let bitrate = Int(stream.recording.videoBitrate)
         let keyFrameInterval = Int(stream.recording.maxKeyFrameInterval)
-        let audioBitrate = Int(stream.recording.audioBitrate!)
+        let audioBitrate = Int(stream.recording.audioBitrate)
         media.startRecording(
             url: isRecording ? currentRecording?.url() : nil,
             replay: stream.replay.enabled,
@@ -77,7 +81,7 @@ extension Model {
     func updateRecordingLength(now: Date) {
         if let currentRecording {
             let elapsed = uptimeFormatter.string(from: now.timeIntervalSince(currentRecording.startTime))!
-            let size = currentRecording.url().fileSize.formatBytes()
+            let size = currentRecording.url()?.fileSize.formatBytes() ?? "-"
             recording.length = "\(elapsed) (\(size))"
             if isWatchLocal() {
                 sendRecordingLengthToWatch(recordingLength: recording.length)
@@ -109,7 +113,7 @@ extension Model {
     }
 
     func setCleanRecordings() {
-        media.setCleanRecordings(enabled: stream.recording.cleanRecordings!)
+        media.setCleanRecordings(enabled: stream.recording.cleanRecordings)
     }
 
     func isShowingStatusRecording() -> Bool {

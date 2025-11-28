@@ -6,26 +6,20 @@ struct SettingsView: View {
     @EnvironmentObject var model: Model
     @ObservedObject var database: Database
 
-    var chat: SettingsChat {
-        database.chat
-    }
-
     var body: some View {
         Form {
             if model.isLive {
                 Section {
                     HStack {
                         Image(systemName: "info.circle.fill")
-                            .foregroundColor(.blue)
-                        Text(
-                            "Settings that would stop the stream are disabled when live."
-                        )
+                            .foregroundStyle(.blue)
+                        Text("Settings that would stop the stream are disabled when live.")
                     }
                 }
             }
             Section {
                 NavigationLink {
-                    StreamsSettingsView(database: database)
+                    StreamsSettingsView(createStreamWizard: model.createStreamWizard, database: database)
                 } label: {
                     Label("Streams", systemImage: "dot.radiowaves.left.and.right")
                 }
@@ -35,14 +29,7 @@ struct SettingsView: View {
                     Label("Scenes", systemImage: "photo.on.rectangle")
                 }
                 NavigationLink {
-                    ChatSettingsView(
-                        chat: database.chat,
-                        timestampColor: chat.timestampColor.color(),
-                        usernameColor: chat.usernameColor.color(),
-                        messageColor: chat.messageColor.color(),
-                        backgroundColor: chat.backgroundColor.color(),
-                        shadowColor: chat.shadowColor.color()
-                    )
+                    ChatSettingsView(chat: database.chat, stream: model.stream)
                 } label: {
                     Label("Chat", systemImage: "message")
                 }
@@ -52,50 +39,36 @@ struct SettingsView: View {
                     Label("Display", systemImage: "rectangle.inset.topright.fill")
                 }
                 NavigationLink {
-                    CameraSettingsView(database: database)
+                    CameraSettingsView(database: database, stream: model.stream, color: database.color)
                 } label: {
                     Label("Camera", systemImage: "camera")
                 }
                 if database.showAllSettings {
                     NavigationLink {
-                        AudioSettingsView(database: database)
+                        AudioSettingsView(database: database,
+                                          stream: model.stream,
+                                          mic: model.mic,
+                                          debug: database.debug)
                     } label: {
                         Label("Audio", systemImage: "waveform")
                     }
-                    NavigationLink {
-                        BitratePresetsSettingsView(database: database)
-                    } label: {
-                        Label("Bitrate presets", systemImage: "speedometer")
-                    }
                 }
                 NavigationLink {
-                    LocationSettingsView()
+                    LocationSettingsView(database: database, location: database.location, stream: $model.stream)
                 } label: {
                     Label("Location", systemImage: "location")
-                }
-                if database.showAllSettings {
-                    NavigationLink {
-                        WebBrowserSettingsView()
-                    } label: {
-                        Label("Web browser", systemImage: "globe")
-                    }
                 }
             }
             Section {
                 if database.showAllSettings {
                     NavigationLink {
-                        RtmpServerSettingsView(database: database)
+                        IngestsSettingsView(database: database)
                     } label: {
-                        Label("RTMP server", systemImage: "server.rack")
-                    }
-                    NavigationLink {
-                        SrtlaServerSettingsView(database: database)
-                    } label: {
-                        Label("SRT(LA) server", systemImage: "server.rack")
+                        Label("Ingests", systemImage: "server.rack")
                     }
                 }
                 NavigationLink {
-                    MoblinkSettingsView(streamerEnabled: database.moblink.server.enabled)
+                    MoblinkSettingsView(status: model.statusOther, streamer: database.moblink.streamer)
                 } label: {
                     Label("Moblink", systemImage: "app.connected.to.app.below.fill")
                 }
@@ -110,7 +83,7 @@ struct SettingsView: View {
             if database.showAllSettings {
                 Section {
                     NavigationLink {
-                        SelfieStickSettingsView(selfieStick: database.selfieStick)
+                        SelfieStickSettingsView(database: database, selfieStick: database.selfieStick)
                     } label: {
                         Label("Selfie stick", systemImage: "line.diagonal")
                     }
@@ -127,7 +100,10 @@ struct SettingsView: View {
                         }
                     }
                     NavigationLink {
-                        RemoteControlSettingsView(database: database)
+                        RemoteControlSettingsView(database: database,
+                                                  status: model.statusOther,
+                                                  assistant: database.remoteControl.assistant,
+                                                  stream: $model.stream)
                     } label: {
                         Label("Remote control", systemImage: "appletvremote.gen1")
                     }
@@ -144,27 +120,27 @@ struct SettingsView: View {
                         Label("GoPro", systemImage: "appletvremote.gen1")
                     }
                     NavigationLink {
-                        CatPrintersSettingsView(catPrinters: model.database.catPrinters)
+                        CatPrintersSettingsView(catPrinters: database.catPrinters)
                     } label: {
                         Label("Cat printers", systemImage: "pawprint")
                     }
                     NavigationLink {
-                        TeslaSettingsView()
+                        TeslaSettingsView(tesla: model.tesla)
                     } label: {
                         Label("Tesla", systemImage: "car.side")
                     }
                     NavigationLink {
-                        CyclingPowerDevicesSettingsView()
+                        CyclingPowerDevicesSettingsView(cyclingPowerDevices: database.cyclingPowerDevices)
                     } label: {
                         Label("Cycling power devices", systemImage: "bicycle")
                     }
                     NavigationLink {
-                        HeartRateDevicesSettingsView()
+                        HeartRateDevicesSettingsView(heartRateDevices: database.heartRateDevices)
                     } label: {
                         Label("Heart rate devices", systemImage: "heart")
                     }
                     NavigationLink {
-                        PhoneCoolerDevicesSettingsView(phoneCoolerDevices: database.phoneCoolerDevices)
+                        BlackSharkCoolerDevicesSettingsView(blackSharkCoolerDevices: database.blackSharkCoolerDevices)
                     } label: {
                         Label("Black Shark coolers", systemImage: "fan")
                     }
@@ -172,31 +148,31 @@ struct SettingsView: View {
             }
             Section {
                 NavigationLink {
-                    CosmeticsSettingsView()
+                    CosmeticsSettingsView(cosmetics: model.cosmetics)
                 } label: {
                     Label {
                         Text("Cosmetics")
                     } icon: {
                         Image(systemName: "heart.fill")
-                            .foregroundColor(.red)
+                            .foregroundStyle(.red)
                     }
                 }
             }
             Section {
                 NavigationLink {
-                    RecordingsSettingsView()
+                    RecordingsSettingsView(model: model)
                 } label: {
                     Label("Recordings", systemImage: "photo.on.rectangle.angled")
                 }
                 if database.showAllSettings {
                     NavigationLink {
-                        StreamingHistorySettingsView()
+                        StreamingHistorySettingsView(model: model)
                     } label: {
                         Label("Streaming history", systemImage: "text.book.closed")
                     }
                 }
             }
-            if database.showAllSettings {
+            if database.showAllSettings, isPhone() {
                 Section {
                     NavigationLink {
                         WatchSettingsView(watch: database.watch)
@@ -232,7 +208,7 @@ struct SettingsView: View {
                         Label("Import and export settings", systemImage: "gearshape")
                     }
                     NavigationLink {
-                        DeepLinkCreatorSettingsView(deepLinkCreator: model.database.deepLinkCreator)
+                        DeepLinkCreatorSettingsView(deepLinkCreator: database.deepLinkCreator)
                     } label: {
                         Label("Deep link creator", systemImage: "link.badge.plus")
                     }

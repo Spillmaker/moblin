@@ -1,26 +1,5 @@
 import SwiftUI
 
-private struct InfoView: View {
-    @EnvironmentObject var model: Model
-    var icon: String
-    var text: String
-    var get: () -> Bool
-    var set: (Bool) -> Void
-
-    var body: some View {
-        HStack {
-            Image(systemName: icon)
-                .frame(width: iconWidth)
-            Toggle(text, isOn: Binding(get: {
-                get()
-            }, set: { value in
-                set(value)
-                model.objectWillChange.send()
-            }))
-        }
-    }
-}
-
 struct LocalOverlaysSettingsView: View {
     @EnvironmentObject var model: Model
     @ObservedObject var show: SettingsShow
@@ -76,12 +55,17 @@ struct LocalOverlaysSettingsView: View {
                     Image(systemName: "waveform")
                 }
                 Label {
+                    Toggle("System monitor", isOn: $show.systemMonitor)
+                } icon: {
+                    Image(systemName: "cpu")
+                }
+                Label {
                     Toggle("Location", isOn: $show.location)
                 } icon: {
                     Image(systemName: "location")
                 }
                 Label {
-                    Toggle("RTMP server", isOn: $show.rtmpSpeed)
+                    Toggle("Ingests", isOn: $show.rtmpSpeed)
                 } icon: {
                     Image(systemName: "server.rack")
                 }

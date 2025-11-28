@@ -2,25 +2,43 @@ import SwiftUI
 
 struct StreamSrtSettingsView: View {
     @EnvironmentObject var model: Model
-    var stream: SettingsStream
+    @ObservedObject var debug: SettingsDebug
+    let stream: SettingsStream
     @State var dnsLookupStrategy: String
 
-    func submitLatency(value: String) {
+    private func changeLatency(value: String) -> String? {
         guard let latency = Int32(value) else {
-            return
+            return String(localized: "Not a number")
         }
         guard latency >= 0 else {
+            return String(localized: "Too small")
+        }
+        return nil
+    }
+
+    private func submitLatency(value: String) {
+        guard let latency = Int32(value) else {
             return
         }
         stream.srt.latency = latency
         model.reloadStreamIfEnabled(stream: stream)
     }
 
-    func submitOverheadBandwidth(value: String) {
+    private func changeOverheadBandwidth(value: String) -> String? {
         guard let overheadBandwidth = Int32(value) else {
-            return
+            return String(localized: "Not a number")
         }
-        guard overheadBandwidth >= 5 && overheadBandwidth <= 100 else {
+        guard overheadBandwidth >= 5 else {
+            return String(localized: "Too small")
+        }
+        guard overheadBandwidth <= 100 else {
+            return String(localized: "Too big")
+        }
+        return nil
+    }
+
+    private func submitOverheadBandwidth(value: String) {
+        guard let overheadBandwidth = Int32(value) else {
             return
         }
         stream.srt.overheadBandwidth = overheadBandwidth
@@ -32,6 +50,7 @@ struct StreamSrtSettingsView: View {
                 TextEditNavigationView(
                     title: String(localized: "Latency"),
                     value: String(stream.srt.latency),
+                    onChange: changeLatency,
                     onSubmit: submitLatency,
                     footers: [
                         String(localized: """
@@ -47,7 +66,7 @@ struct StreamSrtSettingsView: View {
                     StreamSrtAdaptiveBitrateSettingsView(stream: stream)
                 } label: {
                     Toggle("Adaptive bitrate", isOn: Binding(get: {
-                        stream.srt.adaptiveBitrateEnabled!
+                        stream.srt.adaptiveBitrateEnabled
                     }, set: { value in
                         stream.srt.adaptiveBitrateEnabled = value
                         model.reloadStreamIfEnabled(stream: stream)
@@ -59,21 +78,24 @@ struct StreamSrtSettingsView: View {
                 } label: {
                     Text("Connection priorities")
                 }
-                Toggle("Max bandwidth follows input", isOn: Binding(get: {
-                    stream.srt.maximumBandwidthFollowInput!
-                }, set: { value in
-                    stream.srt.maximumBandwidthFollowInput = value
-                    model.reloadStreamIfEnabled(stream: stream)
-                }))
-                .disabled(stream.enabled && model.isLive)
-                TextEditNavigationView(
-                    title: String(localized: "Overhead bandwidth"),
-                    value: String(stream.srt.overheadBandwidth!),
-                    onSubmit: submitOverheadBandwidth,
-                    keyboardType: .numbersAndPunctuation,
-                    valueFormat: { "\($0)%" }
-                )
-                .disabled(stream.enabled && model.isLive)
+                if !debug.newSrt {
+                    Toggle("Max bandwidth follows input", isOn: Binding(get: {
+                        stream.srt.maximumBandwidthFollowInput
+                    }, set: { value in
+                        stream.srt.maximumBandwidthFollowInput = value
+                        model.reloadStreamIfEnabled(stream: stream)
+                    }))
+                    .disabled(stream.enabled && model.isLive)
+                    TextEditNavigationView(
+                        title: String(localized: "Overhead bandwidth"),
+                        value: String(stream.srt.overheadBandwidth),
+                        onChange: changeOverheadBandwidth,
+                        onSubmit: submitOverheadBandwidth,
+                        keyboardType: .numbersAndPunctuation,
+                        valueFormat: { "\($0)%" }
+                    )
+                    .disabled(stream.enabled && model.isLive)
+                }
                 Toggle("Big packets", isOn: Binding(get: {
                     stream.srt.mpegtsPacketsPerPacket == 7
                 }, set: { value in

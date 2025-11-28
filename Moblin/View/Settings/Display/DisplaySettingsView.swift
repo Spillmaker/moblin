@@ -5,17 +5,13 @@ private struct ExternalDisplayContentView: View {
     @ObservedObject var database: Database
 
     var body: some View {
-        HStack {
-            Text("External monitor content")
-            Spacer()
-            Picker("", selection: $database.externalDisplayContent) {
-                ForEach(SettingsExternalDisplayContent.allCases, id: \.self) {
-                    Text($0.toString())
-                }
+        Picker("External monitor content", selection: $database.externalDisplayContent) {
+            ForEach(SettingsExternalDisplayContent.allCases, id: \.self) {
+                Text($0.toString())
             }
-            .onChange(of: database.externalDisplayContent) { _ in
-                model.setExternalDisplayContent()
-            }
+        }
+        .onChange(of: database.externalDisplayContent) { _ in
+            model.setExternalDisplayContent()
         }
     }
 }
@@ -28,23 +24,16 @@ struct DisplaySettingsView: View {
         Form {
             Section {
                 NavigationLink {
-                    QuickButtonsSettingsView()
+                    QuickButtonsSettingsView(model: model)
                 } label: {
                     Text("Quick buttons")
                 }
+                Toggle("Big buttons", isOn: $database.bigButtons)
                 if database.showAllSettings {
                     NavigationLink {
-                        StreamButtonsSettingsView(background: database.streamButtonColor.color())
+                        StreamButtonsSettingsView(database: database)
                     } label: {
                         Text("Stream button")
-                    }
-                    if !ProcessInfo().isiOSAppOnMac {
-                        Toggle("Battery percentage", isOn: Binding(get: {
-                            database.batteryPercentage
-                        }, set: { value in
-                            database.batteryPercentage = value
-                            model.objectWillChange.send()
-                        }))
                     }
                     NavigationLink {
                         LocalOverlaysSettingsView(show: database.show)
@@ -53,29 +42,19 @@ struct DisplaySettingsView: View {
                     }
                     ExternalDisplayContentView(database: database)
                     NavigationLink {
-                        LocalOverlaysNetworkInterfaceNamesSettingsView()
+                        LocalOverlaysNetworkInterfaceNamesSettingsView(database: database)
                     } label: {
                         Text("Network interface names")
                     }
-                    Toggle("Low bitrate warning", isOn: Binding(get: {
-                        database.lowBitrateWarning
-                    }, set: { value in
-                        database.lowBitrateWarning = value
-                    }))
-                    Toggle("Recording confirmations", isOn: Binding(get: {
-                        database.startStopRecordingConfirmations
-                    }, set: { value in
-                        database.startStopRecordingConfirmations = value
-                    }))
+                    Toggle("Low bitrate warning", isOn: $database.lowBitrateWarning)
+                    Toggle("Recording confirmations", isOn: $database.startStopRecordingConfirmations)
                 }
             }
             Section {
-                Toggle("Vibrate", isOn: Binding(get: {
-                    database.vibrate
-                }, set: { value in
-                    database.vibrate = value
-                    model.setAllowHapticsAndSystemSoundsDuringRecording()
-                }))
+                Toggle("Vibrate", isOn: $database.vibrate)
+                    .onChange(of: database.vibrate) { _ in
+                        model.setAllowHapticsAndSystemSoundsDuringRecording()
+                    }
             } footer: {
                 VStack(alignment: .leading) {
                     Text("Enable to vibrate the device when the following toasts appear:")
@@ -89,8 +68,8 @@ struct DisplaySettingsView: View {
                     Text("Make sure silent mode is off for vibrations to work.")
                 }
             }
-            if model.database.showAllSettings {
-                if !ProcessInfo().isiOSAppOnMac {
+            if database.showAllSettings {
+                if !isMac() {
                     Section {
                         Toggle(isOn: Binding(get: {
                             database.portrait

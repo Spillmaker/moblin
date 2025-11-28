@@ -5,7 +5,7 @@ import CoreMedia
  - seealso: https://en.wikipedia.org/wiki/Packetized_elementary_stream
  */
 
-private struct OptionalHeader {
+struct OptionalHeader {
     static let fixedSectionSize = 3
     var markerBits: UInt8 = 2
     var scramblingControl: UInt8 = 0
@@ -79,12 +79,12 @@ private struct OptionalHeader {
         bytes[1] |= additionalCopyInfoFlag.uint8 << 2
         bytes[1] |= crcFlag.uint8 << 1
         bytes[1] |= extentionFlag.uint8
-        return ByteWriter()
-            .writeBytes(bytes)
-            .writeUInt8(pesHeaderLength)
-            .writeBytes(optionalFields)
-            .writeBytes(stuffingBytes)
-            .data
+        let writer = ByteWriter()
+        writer.writeBytes(bytes)
+        writer.writeUInt8(pesHeaderLength)
+        writer.writeBytes(optionalFields)
+        writer.writeBytes(stuffingBytes)
+        return writer.data
     }
 
     func getPresentationTimeStamp() -> CMTime {
@@ -111,110 +111,29 @@ private struct OptionalHeader {
 }
 
 struct MpegTsPacketizedElementaryStream {
-    static let untilPacketLengthSize: Int = 6
-    static let startCode = Data([0x00, 0x00, 0x01])
-    private var startCode = MpegTsPacketizedElementaryStream.startCode
-    private var streamId: UInt8 = 0
-    private var packetLength: UInt16 = 0
-    private var optionalHeader = OptionalHeader()
+    private static let untilPacketLengthSize: Int = 6
+    private static let startCode = Data([0x00, 0x00, 0x01])
+    private let streamId: UInt8
+    private let packetLength: UInt16
+    var optionalHeader = OptionalHeader()
     var data = Data()
 
-    init?(
-        bytes: UnsafePointer<UInt8>,
-        count: UInt32,
-        presentationTimeStamp: CMTime,
-        config: MpegTsAudioConfig,
-        streamId: UInt8
-    ) {
-        data.append(contentsOf: config.makeHeader(Int(count)))
-        data.append(bytes, count: Int(count))
+    init(streamId: UInt8, presentationTimeStamp: CMTime, decodeTimeStamp: CMTime, data: Data) {
+        self.data = data
         optionalHeader.dataAlignmentIndicator = true
-        optionalHeader.setTimestamp(presentationTimeStamp, .invalid)
-        let length = data.count + optionalHeader.encode().count
+        optionalHeader.setTimestamp(presentationTimeStamp, decodeTimeStamp)
+        let length = self.data.count + optionalHeader.encode().count
         if length < Int(UInt16.max) {
             packetLength = UInt16(length)
         } else {
-            return nil
-        }
-        self.streamId = streamId
-    }
-
-    init(
-        bytes: UnsafeMutablePointer<UInt8>,
-        count: Int,
-        presentationTimeStamp: CMTime,
-        decodeTimeStamp: CMTime,
-        config: MpegTsVideoConfigAvc?,
-        streamId: UInt8
-    ) {
-        if let config {
-            // 3 NAL units. SEI(9), SPS(7) and PPS(8)
-            data += nalUnitStartCode
-            data.append(contentsOf: [0x09, 0x10])
-            data += nalUnitStartCode
-            data.append(contentsOf: config.sequenceParameterSets[0])
-            data += nalUnitStartCode
-            data.append(contentsOf: config.pictureParameterSets[0])
-        } else {
-            data += nalUnitStartCode
-            data.append(contentsOf: [0x09, 0x30])
-        }
-        var payload = Data(bytesNoCopy: bytes, count: count, deallocator: .none)
-        addNalUnitStartCodes(&payload)
-        data.append(payload)
-        optionalHeader.dataAlignmentIndicator = true
-        optionalHeader.setTimestamp(presentationTimeStamp, decodeTimeStamp)
-        let length = data.count + optionalHeader.encode().count
-        if length < Int(UInt16.max) {
-            packetLength = UInt16(length)
-        }
-        self.streamId = streamId
-    }
-
-    init(
-        bytes: UnsafeMutablePointer<UInt8>,
-        count: Int,
-        presentationTimeStamp: CMTime,
-        decodeTimeStamp: CMTime,
-        config: MpegTsVideoConfigHevc?,
-        streamId: UInt8,
-        timecode: Date? = nil
-    ) {
-        if let config {
-            if let nal = config.array[.vps] {
-                data += nalUnitStartCode
-                data += nal[0]
-            }
-            if let nal = config.array[.sps] {
-                data += nalUnitStartCode
-                data += nal[0]
-            }
-            if let nal = config.array[.pps] {
-                data += nalUnitStartCode
-                data += nal[0]
-            }
-        }
-        if let timecode {
-            data += nalUnitStartCode
-            let payload = HevcSei(payload: .timeCode(HevcSeiPayloadTimeCode(clock: timecode))).encode()
-            data += HevcNalUnit(type: .prefixSeiNut, temporalIdPlusOne: 1, payload: payload).encode()
-        }
-        var payload = Data(bytesNoCopy: bytes, count: count, deallocator: .none)
-        addNalUnitStartCodes(&payload)
-        data.append(payload)
-        optionalHeader.dataAlignmentIndicator = true
-        optionalHeader.setTimestamp(presentationTimeStamp, decodeTimeStamp)
-        let length = data.count + optionalHeader.encode().count
-        if length < Int(UInt16.max) {
-            packetLength = UInt16(length)
+            packetLength = 0
         }
         self.streamId = streamId
     }
 
     init(data: Data) throws {
         let reader = ByteReader(data: data)
-        startCode = try reader.readBytes(3)
-        if startCode != MpegTsPacketizedElementaryStream.startCode {
+        if try reader.readBytes(3) != MpegTsPacketizedElementaryStream.startCode {
             throw "Bad PES start code"
         }
         streamId = try reader.readUInt8()
@@ -229,158 +148,91 @@ struct MpegTsPacketizedElementaryStream {
         self.data.append(data)
     }
 
-    func isComplete() -> Bool {
-        if packetLength > 0 {
-            return data.count == packetLength - 8
-        }
-        return false
-    }
-
     private func encode() -> Data {
-        ByteWriter()
-            .writeBytes(startCode)
-            .writeUInt8(streamId)
-            .writeUInt16(packetLength)
-            .writeBytes(optionalHeader.encode())
-            .writeBytes(data)
-            .data
+        let writer = ByteWriter()
+        writer.writeBytes(MpegTsPacketizedElementaryStream.startCode)
+        writer.writeUInt8(streamId)
+        writer.writeUInt16(packetLength)
+        writer.writeBytes(optionalHeader.encode())
+        writer.writeBytes(data)
+        return writer.data
     }
 
-    func arrayOfPackets(_ packetId: UInt16, _ programClockReference: UInt64?) -> [MpegTsPacket] {
+    func arrayOfPackets(_ packetId: UInt16,
+                        _ randomAccessIndicator: Bool,
+                        _ programClockReference: UInt64?) -> [MpegTsPacket]
+    {
         let payload = encode()
         var packets: [MpegTsPacket] = []
-        // start
+        var payloadOffset = 0
+        appendFirstPacket(packetId, randomAccessIndicator, programClockReference, &packets, &payloadOffset, payload)
+        appendMiddlePackets(packetId, &packets, &payloadOffset, payload)
+        appendLastPackets(packetId, &packets, &payloadOffset, payload)
+        return packets
+    }
+
+    private func appendFirstPacket(_ packetId: UInt16,
+                                   _ randomAccessIndicator: Bool,
+                                   _ programClockReference: UInt64?,
+                                   _ packets: inout [MpegTsPacket],
+                                   _ payloadOffset: inout Int,
+                                   _ payload: Data)
+    {
         var packet = MpegTsPacket(id: packetId)
         packet.payloadUnitStartIndicator = true
-        packet.adaptationField = MpegTsAdaptationField()
+        var adaptationField = MpegTsAdaptationField()
+        adaptationField.randomAccessIndicator = randomAccessIndicator
         if let programClockReference {
-            packet.adaptationField!.programClockReference = TSProgramClockReference.encode(programClockReference, 0)
+            adaptationField.programClockReference = TSProgramClockReference.encode(programClockReference, 0)
         }
-        var payloadOffset = packet.setPayload(payload)
+        packet.adaptationField = adaptationField
+        payloadOffset = min(packet.maximumPayloadSize(), payload.count)
+        packet.payload = payload[0 ..< payloadOffset]
+        if payloadOffset > payload.count {
+            packet.setAdaptionFieldStuffing(size: payloadOffset - payload.count)
+        }
         packets.append(packet)
-        // middle
-        packet = MpegTsPacket(id: packetId)
+    }
+
+    private func appendMiddlePackets(_ packetId: UInt16,
+                                     _ packets: inout [MpegTsPacket],
+                                     _ payloadOffset: inout Int,
+                                     _ payload: Data)
+    {
+        var packet = MpegTsPacket(id: packetId)
         while payloadOffset <= payload.count - 184 {
             packet.payload = payload[payloadOffset ..< payloadOffset + 184]
             packets.append(packet)
             payloadOffset += 184
         }
+    }
+
+    private func appendLastPackets(_ packetId: UInt16,
+                                   _ packets: inout [MpegTsPacket],
+                                   _ payloadOffset: inout Int,
+                                   _ payload: Data)
+    {
         let rest = (payload.count - payloadOffset) % 184
         switch rest {
         case 0:
             break
         case 183:
-            let remain = payload.subdata(in: payload.endIndex - rest ..< payload.endIndex - 1)
             var packet = MpegTsPacket(id: packetId)
             packet.adaptationField = MpegTsAdaptationField()
-            _ = packet.setPayload(remain)
+            packet.payload = payload[payloadOffset ..< payloadOffset + 182]
+            payloadOffset += 182
             packets.append(packet)
             packet = MpegTsPacket(id: packetId)
             packet.adaptationField = MpegTsAdaptationField()
-            _ = packet.setPayload(Data([payload[payload.count - 1]]))
+            packet.payload = payload[payloadOffset ..< payload.count]
+            packet.setAdaptionFieldStuffing(size: 182 - packet.payload.count)
             packets.append(packet)
         default:
-            let remain = payload.subdata(in: payload.count - rest ..< payload.count)
             var packet = MpegTsPacket(id: packetId)
             packet.adaptationField = MpegTsAdaptationField()
-            _ = packet.setPayload(remain)
+            packet.payload = payload[payloadOffset ..< payload.count]
+            packet.setAdaptionFieldStuffing(size: 182 - packet.payload.count)
             packets.append(packet)
         }
-        return packets
-    }
-
-    mutating func makeVideoSampleBuffer(
-        _ basePresentationTimeStamp: CMTime,
-        _ firstReceivedPresentationTimeStamp: CMTime?,
-        _ previousReceivedPresentationTimeStamp: CMTime?,
-        _ formatDescription: CMFormatDescription?
-    ) -> (CMSampleBuffer, CMTime, CMTime)? {
-        removeNalUnitStartCodes(&data)
-        let blockBuffer = data.makeBlockBuffer()
-        var sampleSizes = [blockBuffer?.dataLength ?? 0]
-        return makeSampleBuffer(
-            basePresentationTimeStamp,
-            firstReceivedPresentationTimeStamp,
-            previousReceivedPresentationTimeStamp,
-            formatDescription,
-            blockBuffer,
-            &sampleSizes
-        )
-    }
-
-    mutating func makeAudioSampleBuffer(
-        _ basePresentationTimeStamp: CMTime,
-        _ firstReceivedPresentationTimeStamp: CMTime?,
-        _ previousReceivedPresentationTimeStamp: CMTime?,
-        _ formatDescription: CMFormatDescription?
-    ) -> (CMSampleBuffer, CMTime, CMTime)? {
-        var sampleSizes: [Int] = []
-        let blockBuffer = data.makeBlockBuffer(advancedBy: 7)
-        let reader = ADTSReader(data: data)
-        var iterator = reader.makeIterator()
-        while let next = iterator.next() {
-            sampleSizes.append(next)
-        }
-        guard !sampleSizes.isEmpty else {
-            return nil
-        }
-        return makeSampleBuffer(
-            basePresentationTimeStamp,
-            firstReceivedPresentationTimeStamp,
-            previousReceivedPresentationTimeStamp,
-            formatDescription,
-            blockBuffer,
-            &sampleSizes
-        )
-    }
-
-    private func makeSampleBuffer(
-        _ basePresentationTimeStamp: CMTime,
-        _ firstReceivedPresentationTimeStamp: CMTime?,
-        _ previousReceivedPresentationTimeStamp: CMTime?,
-        _ formatDescription: CMFormatDescription?,
-        _ blockBuffer: CMBlockBuffer?,
-        _ sampleSizes: inout [Int]
-    ) -> (CMSampleBuffer, CMTime, CMTime)? {
-        var sampleBuffer: CMSampleBuffer?
-        let receivedPresentationTimeStamp = optionalHeader.getPresentationTimeStamp()
-        let receivedDecodeTimeStamp = optionalHeader.getDecodeTimeStamp()
-        var timing = CMSampleTimingInfo()
-        var firstReceivedPresentationTimeStamp = firstReceivedPresentationTimeStamp
-        if let firstReceivedPresentationTimeStamp {
-            let basePresentationTimeStamp = basePresentationTimeStamp - firstReceivedPresentationTimeStamp
-            timing.presentationTimeStamp = basePresentationTimeStamp + receivedPresentationTimeStamp
-            timing.decodeTimeStamp = basePresentationTimeStamp + receivedDecodeTimeStamp
-            if let previousReceivedPresentationTimeStamp {
-                timing.duration = timing.presentationTimeStamp - previousReceivedPresentationTimeStamp
-            } else {
-                timing.duration = .invalid
-            }
-        } else {
-            timing.presentationTimeStamp = basePresentationTimeStamp
-            timing.decodeTimeStamp = basePresentationTimeStamp
-            timing.duration = .invalid
-            firstReceivedPresentationTimeStamp = receivedPresentationTimeStamp
-        }
-        guard let blockBuffer, CMSampleBufferCreate(
-            allocator: kCFAllocatorDefault,
-            dataBuffer: blockBuffer,
-            dataReady: true,
-            makeDataReadyCallback: nil,
-            refcon: nil,
-            formatDescription: formatDescription,
-            sampleCount: sampleSizes.count,
-            sampleTimingEntryCount: 1,
-            sampleTimingArray: &timing,
-            sampleSizeEntryCount: sampleSizes.count,
-            sampleSizeArray: &sampleSizes,
-            sampleBufferOut: &sampleBuffer
-        ) == noErr else {
-            return nil
-        }
-        guard let sampleBuffer else {
-            return nil
-        }
-        return (sampleBuffer, firstReceivedPresentationTimeStamp!, timing.presentationTimeStamp)
     }
 }

@@ -16,12 +16,16 @@ struct MoblinApp: App {
             MainView(
                 webBrowserController: model.webBrowserController,
                 streamView: StreamView(
-                    cameraPreviewView: CameraPreviewView(),
-                    streamPreviewView: StreamPreviewView()
+                    show: model.show,
+                    cameraPreviewView: CameraPreviewView(model: model),
+                    streamPreviewView: StreamPreviewView(model: model)
                 ),
-                webBrowserView: WebBrowserView(),
-                replay: model.replay
+                createStreamWizard: model.createStreamWizard,
+                toast: model.toast,
+                orientation: model.orientation,
+                quickButtons: model.database.quickButtonsGeneral
             )
+            .background(.black)
             .environmentObject(model)
         }
     }
@@ -35,7 +39,7 @@ struct ExternalScreenContentView: View {
     }
 
     var body: some View {
-        ExternalDisplayView()
+        ExternalDisplayView(externalDisplay: model.externalDisplay)
             .ignoresSafeArea()
             .environmentObject(model)
     }
@@ -73,15 +77,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         didSet {
             for scene in UIApplication.shared.connectedScenes {
                 if let windowScene = scene as? UIWindowScene {
-                    windowScene
-                        .requestGeometryUpdate(
-                            .iOS(interfaceOrientations: orientationLock)
-                        )
+                    windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: orientationLock))
+                    windowScene.windows.first?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
                 }
             }
-            // For some reason new way of doing this does not work in all
-            // cases. See repo log.
-            UIViewController.attemptRotationToDeviceOrientation()
         }
     }
 
@@ -100,16 +99,14 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(
         _: UIApplication,
-        willFinishLaunchingWithOptions _: [UIApplication
-            .LaunchOptionsKey: Any]? = nil
+        willFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         return true
     }
 
     func application(
         _: UIApplication,
-        didFinishLaunchingWithOptions _: [UIApplication
-            .LaunchOptionsKey: Any]? = nil
+        didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         return true
     }

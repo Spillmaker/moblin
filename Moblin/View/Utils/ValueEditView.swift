@@ -1,12 +1,12 @@
 import SwiftUI
 
 struct ValueEditView: View {
-    var title: String
+    let title: String
     @State var number: Float
     @State var value: String
-    var minimum: Float
-    var maximum: Float
-    var onSubmit: (String) -> String
+    let minimum: Float
+    let maximum: Float
+    let onSubmit: (String) -> String
     var increment: Float = 1
     var unit: String?
 
@@ -66,7 +66,10 @@ struct ValueEditView: View {
         Slider(
             value: $number,
             in: minimum ... maximum,
-            step: increment
+            step: increment,
+            label: {
+                EmptyView()
+            }
         )
         .onChange(of: number) { number in
             value = onSubmit("\(number)")
@@ -77,12 +80,13 @@ struct ValueEditView: View {
 struct ValueEditCompactView: View {
     @Binding var number: Double
     @Binding var value: String
-    var minimum: Double
-    var maximum: Double
-    var onSubmit: (String) -> String
+    let minimum: Double
+    let maximum: Double
+    let onSubmit: (String) -> String
     @Binding var numericInput: Bool
-    var incrementImageName: String
-    var decrementImageName: String
+    let incrementImageName: String
+    let decrementImageName: String
+    let mirror: Bool
     var increment: Double = 1
 
     func add(offset: Double) {
@@ -110,14 +114,15 @@ struct ValueEditCompactView: View {
                 Slider(
                     value: $number,
                     in: minimum ... maximum,
-                    step: increment
+                    step: 1
                 )
+                .rotationEffect(.degrees(mirror ? 180 : 0))
                 .onChange(of: number) { number in
                     value = onSubmit("\(number)")
                 }
             }
             Button {
-                add(offset: -increment)
+                add(offset: mirror ? increment : -increment)
                 value = onSubmit(value.trim())
                 add(offset: 0)
             } label: {
@@ -125,7 +130,7 @@ struct ValueEditCompactView: View {
                     .font(.title)
             }
             Button {
-                add(offset: increment)
+                add(offset: mirror ? -increment : increment)
                 value = onSubmit(value.trim())
                 add(offset: 0)
             } label: {

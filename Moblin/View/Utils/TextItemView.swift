@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct TextItemView: View {
-    var name: String
-    var value: String
+    let name: String
+    let value: String
     var sensitive: Bool = false
     var color: Color = .gray
 
@@ -11,7 +11,7 @@ struct TextItemView: View {
             Text(name)
             Spacer()
             Text(replaceSensitive(value: value, sensitive: sensitive))
-                .foregroundColor(color)
+                .foregroundStyle(color)
                 .lineLimit(1)
         }
     }

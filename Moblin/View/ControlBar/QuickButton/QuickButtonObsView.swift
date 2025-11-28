@@ -1,164 +1,221 @@
 import AVFoundation
 import SwiftUI
 
-private struct ObsStartStopStreamingView: View {
-    @EnvironmentObject var model: Model
-    @State private var isPresentingStartStreamingConfirm = false
-    @State private var isPresentingStopStreamingConfirm = false
+private struct ObsStartStopButtonView: View {
+    @Binding var state: ObsOutputState
+    let startAction: () -> Void
+    let stopAction: () -> Void
+    let startText: LocalizedStringKey
+    let stopText: LocalizedStringKey
+    @State private var isPresentingStartConfirm = false
+    @State private var isPresentingStopConfirm = false
 
     var body: some View {
-        if model.obsStreamingState == .stopped {
+        switch state {
+        case .stopped:
             Section {
-                HStack {
-                    Spacer()
-                    Button {
-                        isPresentingStartStreamingConfirm = true
-                    } label: {
-                        Text("Start streaming")
+                TextButtonView(startText) {
+                    isPresentingStartConfirm = true
+                }
+                .confirmationDialog("", isPresented: $isPresentingStartConfirm) {
+                    Button(startText) {
+                        startAction()
                     }
-                    .confirmationDialog("", isPresented: $isPresentingStartStreamingConfirm) {
-                        Button("Start") {
-                            model.obsStartStream()
-                        }
-                    }
-                    Spacer()
                 }
             }
-            .listRowBackground(RoundedRectangle(cornerRadius: 10)
-                .foregroundColor(Color(uiColor: .secondarySystemGroupedBackground))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .stroke(.blue, lineWidth: 2)))
-        } else if model.obsStreamingState == .starting {
+        case .starting:
             Section {
-                HStack {
-                    Spacer()
+                HCenter {
                     Text("Starting...")
-                    Spacer()
                 }
             }
-            .foregroundColor(.white)
+            .foregroundStyle(.white)
             .listRowBackground(Color.gray)
-        } else if model.obsStreamingState == .started {
+        case .started:
             Section {
-                HStack {
-                    Spacer()
-                    Button {
-                        isPresentingStopStreamingConfirm = true
-                    } label: {
-                        Text("Stop streaming")
+                TextButtonView(stopText) {
+                    isPresentingStopConfirm = true
+                }
+                .confirmationDialog("", isPresented: $isPresentingStopConfirm) {
+                    Button(stopText) {
+                        stopAction()
                     }
-                    .confirmationDialog("", isPresented: $isPresentingStopStreamingConfirm) {
-                        Button("Stop") {
-                            model.obsStopStream()
-                        }
-                    }
-                    Spacer()
                 }
             }
-            .foregroundColor(.white)
+            .foregroundStyle(.white)
             .listRowBackground(Color.blue)
-        } else if model.obsStreamingState == .stopping {
+        case .stopping:
             Section {
-                HStack {
-                    Spacer()
+                HCenter {
                     Text("Stopping...")
-                    Spacer()
                 }
             }
-            .foregroundColor(.white)
+            .foregroundStyle(.white)
             .listRowBackground(Color.gray)
-        } else {
-            Section {
-                HStack {
-                    Spacer()
-                    Text("Unknown streaming state.")
-                    Spacer()
-                }
-            }
         }
+    }
+}
+
+private struct ObsStartStopStreamingView: View {
+    let model: Model
+    @ObservedObject var obsQuickButton: QuickButtonObs
+
+    var body: some View {
+        ObsStartStopButtonView(state: $obsQuickButton.streamingState,
+                               startAction: {
+                                   model.obsStartStream()
+                               }, stopAction: {
+                                   model.obsStopStream()
+                               }, startText: "Start streaming",
+                               stopText: "Stop streaming")
     }
 }
 
 private struct ObsStartStopRecordingView: View {
-    @EnvironmentObject var model: Model
-    @State private var isPresentingStartRecordingConfirm: Bool = false
-    @State private var isPresentingStopRecordingConfirm: Bool = false
+    let model: Model
+    @ObservedObject var obsQuickButton: QuickButtonObs
 
     var body: some View {
-        if model.obsRecordingState == .stopped {
-            Section {
-                HStack {
-                    Spacer()
-                    Button {
-                        isPresentingStartRecordingConfirm = true
-                    } label: {
-                        Text("Start recording")
+        ObsStartStopButtonView(state: $obsQuickButton.recordingState,
+                               startAction: {
+                                   model.obsStartRecording()
+                               }, stopAction: {
+                                   model.obsStopRecording()
+                               }, startText: "Start recording",
+                               stopText: "Stop recording")
+    }
+}
+
+private struct ObsSettingsView: View {
+    let model: Model
+    @ObservedObject var stream: SettingsStream
+
+    var body: some View {
+        Form {
+            Toggle("Enabled", isOn: $stream.obsWebSocketEnabled)
+                .onChange(of: stream.obsWebSocketEnabled) { _ in
+                    if stream.enabled {
+                        model.obsWebSocketEnabledUpdated()
                     }
-                    .confirmationDialog("", isPresented: $isPresentingStartRecordingConfirm) {
-                        Button("Start") {
-                            model.obsStartRecording()
-                        }
-                    }
-                    Spacer()
                 }
+            StreamObsRemoteControlSettingsInnerView(stream: stream)
+        }
+        .navigationTitle("OBS remote control")
+    }
+}
+
+private struct ObsSnapshotView: View {
+    @ObservedObject var obsQuickButton: QuickButtonObs
+
+    var body: some View {
+        Section {
+            if let image = obsQuickButton.screenshot {
+                Image(image, scale: 1, label: Text(""))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .background(.black)
+            } else {
+                Text("No snapshot received yet.")
             }
-            .listRowBackground(RoundedRectangle(cornerRadius: 10)
-                .foregroundColor(Color(uiColor: .secondarySystemGroupedBackground))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .stroke(.blue, lineWidth: 2)))
-        } else if model.obsRecordingState == .starting {
-            Section {
-                HStack {
-                    Spacer()
-                    Text("Starting...")
-                    Spacer()
-                }
-            }
-            .foregroundColor(.white)
-            .listRowBackground(Color.gray)
-        } else if model.obsRecordingState == .started {
-            Section {
-                HStack {
-                    Spacer()
-                    Button {
-                        isPresentingStopRecordingConfirm = true
-                    } label: {
-                        Text("Stop recording")
-                    }
-                    .confirmationDialog("", isPresented: $isPresentingStopRecordingConfirm) {
-                        Button("Stop") {
-                            model.obsStopRecording()
-                        }
-                    }
-                    Spacer()
-                }
-            }
-            .foregroundColor(.white)
-            .listRowBackground(Color.blue)
-        } else if model.obsRecordingState == .stopping {
-            Section {
-                HStack {
-                    Spacer()
-                    Text("Stopping...")
-                    Spacer()
-                }
-            }
-            .foregroundColor(.white)
-            .listRowBackground(Color.gray)
-        } else {
-            Section {
-                HStack {
-                    Spacer()
-                    Text("Unknown recording state.")
-                    Spacer()
-                }
-            }
+        } header: {
+            Text("Current scene snapshot")
         }
     }
 }
 
-struct QuickButtonObsView: View {
-    @EnvironmentObject var model: Model
+private struct ObsScenesView: View {
+    let model: Model
+    @ObservedObject var obsQuickButton: QuickButtonObs
+
+    var body: some View {
+        Section {
+            Picker("", selection: $obsQuickButton.currentScenePicker) {
+                ForEach(obsQuickButton.scenes, id: \.self) { scene in
+                    Text(scene)
+                }
+            }
+            .onChange(of: obsQuickButton.currentScenePicker) { _ in
+                guard obsQuickButton.currentScene != obsQuickButton.currentScenePicker else {
+                    return
+                }
+                model.setObsScene(name: obsQuickButton.currentScenePicker)
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } header: {
+            Text("Scenes")
+        }
+    }
+}
+
+private struct ObsSceneAudioInputsView: View {
+    let model: Model
+    @ObservedObject var obsQuickButton: QuickButtonObs
+
+    var body: some View {
+        Section {
+            ForEach(obsQuickButton.sceneInputs) { input in
+                if let muted = input.muted {
+                    HStack {
+                        Text(input.name)
+                        Spacer()
+                        Button {
+                            model.obsMuteAudio(inputName: input.name, muted: !muted)
+                        } label: {
+                            if muted {
+                                Image(systemName: "microphone.slash")
+                                    .foregroundStyle(.red)
+                            } else {
+                                Image(systemName: "microphone")
+                            }
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Scene audio inputs")
+        }
+    }
+}
+
+private struct ObsFixSourceView: View {
+    let model: Model
+    @ObservedObject var stream: SettingsStream
+    @ObservedObject var obsQuickButton: QuickButtonObs
+
+    var body: some View {
+        if !obsQuickButton.fixOngoing {
+            Section {
+                TextButtonView("Fix \(stream.obsSourceName) source") {
+                    model.obsFixStream()
+                }
+            } footer: {
+                Text("""
+                Restarts the \(stream.obsSourceName) source to hopefully fix \
+                audio and video issues.
+                """)
+            }
+        } else {
+            Section {
+                HCenter {
+                    Text("Fixing...")
+                }
+                .foregroundStyle(.white)
+            } footer: {
+                Text("""
+                Restarts the \(stream.obsSourceName) source to hopefully fix \
+                audio and video issues.
+                """)
+            }
+            .listRowBackground(Color.gray)
+        }
+    }
+}
+
+private struct ObsAudioSyncView: View {
+    let model: Model
+    @ObservedObject var stream: SettingsStream
+    @ObservedObject var obsQuickButton: QuickButtonObs
 
     private func submitAudioDelay(value: String) -> String {
         let offsetDouble = Double(value) ?? 0
@@ -169,147 +226,105 @@ struct QuickButtonObsView: View {
     }
 
     var body: some View {
+        Section {
+            ValueEditView(
+                title: "Delay",
+                number: Float(obsQuickButton.audioDelay),
+                value: "\(obsQuickButton.audioDelay)",
+                minimum: Float(obsMinimumAudioDelay),
+                maximum: Float(min(obsMaximumAudioDelay, 9999)),
+                onSubmit: submitAudioDelay,
+                increment: 10,
+                unit: "ms"
+            )
+        } header: {
+            Text("\(stream.obsSourceName) source audio sync")
+        }
+    }
+}
+
+private struct ObsAudioLevelsView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var stream: SettingsStream
+    @ObservedObject var obsQuickButton: QuickButtonObs
+
+    var body: some View {
+        Section {
+            if model.isLive {
+                if !obsQuickButton.audioVolume.isEmpty {
+                    Text(obsQuickButton.audioVolume)
+                } else {
+                    Text("No audio levels received yet.")
+                }
+            } else {
+                Text("Go live to see audio levels.")
+            }
+        } header: {
+            Text("\(stream.obsSourceName) source audio levels")
+        }
+    }
+}
+
+private struct ObsConnectedView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var stream: SettingsStream
+    @ObservedObject var obsQuickButton: QuickButtonObs
+
+    var body: some View {
+        ObsStartStopStreamingView(model: model, obsQuickButton: obsQuickButton)
+        ObsStartStopRecordingView(model: model, obsQuickButton: obsQuickButton)
+        ObsSnapshotView(obsQuickButton: obsQuickButton)
+        ObsScenesView(model: model, obsQuickButton: obsQuickButton)
+        ObsSceneAudioInputsView(model: model, obsQuickButton: obsQuickButton)
+        if !stream.obsSourceName.isEmpty {
+            ObsFixSourceView(model: model, stream: stream, obsQuickButton: obsQuickButton)
+            ObsAudioSyncView(model: model, stream: stream, obsQuickButton: obsQuickButton)
+            ObsAudioLevelsView(stream: stream, obsQuickButton: obsQuickButton)
+        } else {
+            Text("""
+            Configure source name in \
+            Settings → Streams → \(stream.name) → OBS remote control for \
+            Fix button and more.
+            """)
+        }
+    }
+}
+
+struct QuickButtonObsView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var stream: SettingsStream
+    @ObservedObject var obsQuickButton: QuickButtonObs
+
+    var body: some View {
         Form {
-            if !model.isObsConnected() {
+            if !model.isObsRemoteControlConfigured() {
+            } else if !model.isObsConnected() {
                 Section {
                     Text("Unable to connect the OBS server. Retrying every 5 seconds.")
                 }
             } else {
-                ObsStartStopStreamingView()
-                ObsStartStopRecordingView()
+                ObsConnectedView(stream: stream, obsQuickButton: obsQuickButton)
+            }
+            if stream !== fallbackStream {
                 Section {
-                    if let image = model.obsScreenshot {
-                        Image(image, scale: 1, label: Text(""))
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .background(.black)
-                    } else {
-                        Text("No snapshot received yet.")
+                    NavigationLink {
+                        ObsSettingsView(model: model, stream: stream)
+                    } label: {
+                        Label("OBS remote control", systemImage: "dot.radiowaves.left.and.right")
                     }
                 } header: {
-                    Text("Current scene snapshot")
-                }
-                Section {
-                    Picker("", selection: $model.obsCurrentScenePicker) {
-                        ForEach(model.obsScenes, id: \.self) { scene in
-                            Text(scene)
-                        }
-                    }
-                    .onChange(of: model.obsCurrentScenePicker) { _ in
-                        guard model.obsCurrentScene != model.obsCurrentScenePicker else {
-                            return
-                        }
-                        model.setObsScene(name: model.obsCurrentScenePicker)
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                } header: {
-                    Text("Scenes")
-                }
-                Section {
-                    ForEach(model.obsSceneInputs) { input in
-                        if let muted = input.muted {
-                            HStack {
-                                Text(input.name)
-                                Spacer()
-                                Button {
-                                    model.obsMuteAudio(inputName: input.name, muted: !muted)
-                                } label: {
-                                    if muted {
-                                        Image(systemName: "microphone.slash")
-                                            .foregroundColor(.red)
-                                    } else {
-                                        Image(systemName: "microphone")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Scene audio inputs")
-                }
-                if !model.stream.obsSourceName.isEmpty {
-                    if !model.obsFixOngoing {
-                        Section {
-                            HStack {
-                                Spacer()
-                                Button {
-                                    model.obsFixStream()
-                                } label: {
-                                    Text("Fix \(model.stream.obsSourceName) source")
-                                }
-                                Spacer()
-                            }
-                        } footer: {
-                            Text("""
-                            Restarts the \(model.stream.obsSourceName) source to hopefully fix \
-                            audio and video issues.
-                            """)
-                        }
-                        .listRowBackground(RoundedRectangle(cornerRadius: 10)
-                            .foregroundColor(Color(uiColor: .secondarySystemGroupedBackground))
-                            .overlay(RoundedRectangle(cornerRadius: 10)
-                                .stroke(.blue, lineWidth: 2)))
-                    } else {
-                        Section {
-                            HStack {
-                                Spacer()
-                                Text("Fixing...")
-                                Spacer()
-                            }
-                            .foregroundColor(.white)
-                        } footer: {
-                            Text("""
-                            Restarts the \(model.stream.obsSourceName) source to hopefully fix \
-                            audio and video issues.
-                            """)
-                        }
-                        .listRowBackground(Color.gray)
-                    }
-                    Section {
-                        ValueEditView(
-                            title: "Delay",
-                            number: Float(model.obsAudioDelay),
-                            value: "\(model.obsAudioDelay)",
-                            minimum: Float(obsMinimumAudioDelay),
-                            maximum: Float(min(obsMaximumAudioDelay, 9999)),
-                            onSubmit: submitAudioDelay,
-                            increment: 10,
-                            unit: "ms"
-                        )
-                    } header: {
-                        Text("\(model.stream.obsSourceName) source audio sync")
-                    }
-                    Section {
-                        if model.isLive {
-                            if !model.obsAudioVolume.isEmpty {
-                                Text(model.obsAudioVolume)
-                            } else {
-                                Text("No audio levels received yet.")
-                            }
-                        } else {
-                            Text("Go live to see audio levels.")
-                        }
-                    } header: {
-                        Text("\(model.stream.obsSourceName) source audio levels")
-                    }
-                } else {
-                    Text("""
-                    Configure source name in \
-                    Settings → Streams → \(model.stream.name) → OBS remote control for \
-                    Fix button and more.
-                    """)
+                    Text("Shortcut")
                 }
             }
         }
         .onAppear {
             model.listObsScenes(updateAudioInputs: true)
-            model.startObsSourceScreenshot()
+            obsQuickButton.startObsSourceScreenshot()
             model.startObsAudioVolume()
             model.updateObsAudioDelay()
         }
         .onDisappear {
-            model.stopObsSourceScreenshot()
+            obsQuickButton.stopObsSourceScreenshot()
             model.stopObsAudioVolume()
         }
         .navigationTitle("OBS remote control")

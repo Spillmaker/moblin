@@ -4,29 +4,26 @@ final class RtmpDataMessage: RtmpMessage {
     var handlerName: String = ""
     var arguments: [Any?] = []
 
-    init(objectEncoding: RtmpObjectEncoding) {
-        super.init(type: objectEncoding.dataType)
+    init(dataType: RtmpMessageType) {
+        super.init(type: dataType)
     }
 
     init(
         streamId: UInt32,
-        objectEncoding: RtmpObjectEncoding,
+        dataType: RtmpMessageType,
         timestamp: UInt32,
         handlerName: String,
         arguments: [Any?] = []
     ) {
         self.handlerName = handlerName
         self.arguments = arguments
-        super.init(type: objectEncoding.dataType)
+        super.init(type: dataType)
         self.timestamp = timestamp
         self.streamId = streamId
     }
 
     override func execute(_ connection: RtmpConnection) {
-        guard let stream = connection.streams.first(where: { $0.id == streamId }) else {
-            return
-        }
-        stream.info.byteCount.mutate { $0 += Int64(encoded.count) }
+        connection.stream?.info.byteCount.mutate { $0 += Int64(encoded.count) }
     }
 
     override var encoded: Data {
@@ -38,7 +35,7 @@ final class RtmpDataMessage: RtmpMessage {
             if type == .amf3Data {
                 serializer.writeUInt8(0)
             }
-            _ = serializer.serialize(handlerName)
+            serializer.serialize(handlerName)
             for arg in arguments {
                 serializer.serialize(arg)
             }

@@ -2,8 +2,8 @@ import SwiftUI
 
 private struct InterfaceViewUrl: View {
     @EnvironmentObject var model: Model
-    var url: String
-    var image: String
+    let url: String
+    let image: String
 
     var body: some View {
         HStack {
@@ -21,9 +21,9 @@ private struct InterfaceViewUrl: View {
 }
 
 private struct InterfaceView: View {
-    var ip: String
-    var port: UInt16
-    var image: String
+    let ip: String
+    let port: UInt16
+    let image: String
 
     var body: some View {
         InterfaceViewUrl(url: "ws://\(ip):\(port)", image: image)
@@ -33,7 +33,7 @@ private struct InterfaceView: View {
 private struct PasswordView: View {
     @EnvironmentObject var model: Model
     @State var value: String
-    var onSubmit: (String) -> Void
+    let onSubmit: (String) -> Void
     @State private var changed = false
     @State private var submitted = false
     @State private var message: String?
@@ -89,18 +89,14 @@ private struct PasswordView: View {
             } footer: {
                 if let message {
                     Text(message)
-                        .foregroundColor(.red)
+                        .foregroundStyle(.red)
                         .bold()
                 }
             }
             Section {
-                Button {
+                TextButtonView("Reset to default") {
                     value = "1234"
                     submit()
-                } label: {
-                    HCenter {
-                        Text("Reset to default")
-                    }
                 }
                 .disabled(model.isLive)
             }
@@ -110,9 +106,9 @@ private struct PasswordView: View {
 }
 
 private struct RelayStreamerServerView: View {
-    var server: MoblinkScannerStreamer
+    let server: MoblinkScannerStreamer
     @Binding var streamerUrl: String
-    var submitUrl: (String) -> Void
+    let submitUrl: (String) -> Void
 
     var body: some View {
         Section {
@@ -135,13 +131,14 @@ private struct RelayStreamerServerView: View {
 private struct RelayStreamerUrlView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var model: Model
+    @ObservedObject var moblink: Moblink
     @Binding var streamerUrl: String
 
     private func submitUrl(value: String) {
         guard isValidWebSocketUrl(url: value) == nil else {
             return
         }
-        model.database.moblink.client.url = value
+        model.database.moblink.relay.url = value
         model.reloadMoblinkRelay()
         dismiss()
     }
@@ -157,11 +154,11 @@ private struct RelayStreamerUrlView: View {
                         submitUrl(value: streamerUrl)
                     }
             }
-            if model.moblinkScannerDiscoveredStreamers.isEmpty {
+            if moblink.scannerDiscoveredStreamers.isEmpty {
                 Text("No streamers discovered yet on your local network.")
             } else {
                 List {
-                    ForEach(model.moblinkScannerDiscoveredStreamers) { server in
+                    ForEach(moblink.scannerDiscoveredStreamers) { server in
                         RelayStreamerServerView(server: server, streamerUrl: $streamerUrl, submitUrl: submitUrl)
                     }
                 }
@@ -174,26 +171,18 @@ private struct RelayStreamerUrlView: View {
 private struct RelayView: View {
     @EnvironmentObject var model: Model
     @ObservedObject var relay: SettingsMoblinkRelay
+    @State var relayId = ""
 
     var body: some View {
         Section {
-            Toggle(isOn: Binding(get: {
-                model.database.moblink.client.enabled
-            }, set: { value in
-                model.database.moblink.client.enabled = value
-                model.reloadMoblinkRelay()
-                model.objectWillChange.send()
-            })) {
-                Text("Enabled")
-            }
-            NavigationLink {
-                NameEditView(name: $relay.name)
-            } label: {
-                TextItemView(name: String(localized: "Name"), value: relay.name)
-            }
-            .onChange(of: relay.name) { _ in
-                model.reloadMoblinkRelay()
-            }
+            Toggle("Enabled", isOn: $relay.enabled)
+                .onChange(of: relay.enabled) { _ in
+                    model.reloadMoblinkRelay()
+                }
+            NameEditView(name: $relay.name)
+                .onChange(of: relay.name) { _ in
+                    model.reloadMoblinkRelay()
+                }
             Toggle(isOn: $relay.manual) {
                 Text("Manual")
             }
@@ -203,48 +192,62 @@ private struct RelayView: View {
             .disabled(model.isLive)
             if relay.manual {
                 NavigationLink {
-                    RelayStreamerUrlView(streamerUrl: $relay.url)
+                    RelayStreamerUrlView(moblink: model.moblink, streamerUrl: $relay.url)
                 } label: {
                     TextItemView(name: String(localized: "Streamer URL"), value: relay.url)
                 }
             }
+            TextButtonView("Reset id") {
+                moblinkRelayResetId()
+                model.reloadMoblinkRelay()
+                relayId = getMoblinkRelayId()
+            }
         } header: {
             Text("Relay")
         } footer: {
-            Text("""
-            Enable this on the device you want to use as the extra bonding connection. The device \
-            must have cellular data enabled.
-            """)
+            VStack(alignment: .leading) {
+                Text("""
+                Enable this on the device you want to use as the extra bonding connection. The device \
+                must have cellular data enabled.
+                """)
+                Text("")
+                Text("ID: \(relayId)")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+            }
+        }
+        .onAppear {
+            relayId = getMoblinkRelayId()
         }
     }
 }
 
 private struct StreamerView: View {
     @EnvironmentObject var model: Model
-    @Binding var enabled: Bool
+    @ObservedObject var streamer: SettingsMoblinkStreamer
 
     private func submitPort(value: String) {
         guard let port = UInt16(value.trim()) else {
+            model.makePortErrorToast(port: value)
             return
         }
-        model.database.moblink.server.port = port
+        streamer.port = port
         model.reloadMoblinkStreamer()
     }
 
     var body: some View {
         Section {
-            Toggle(isOn: $enabled) {
+            Toggle(isOn: $streamer.enabled) {
                 Text("Enabled")
             }
-            .onChange(of: enabled) { value in
-                model.database.moblink.server.enabled = value
+            .onChange(of: streamer.enabled) { _ in
                 model.reloadMoblinkStreamer()
-                model.objectWillChange.send()
             }
             .disabled(model.isLive)
             TextEditNavigationView(
                 title: String(localized: "Server port"),
-                value: String(model.database.moblink.server.port),
+                value: String(streamer.port),
+                onChange: isValidPort,
                 onSubmit: submitPort,
                 keyboardType: .numbersAndPunctuation,
                 placeholder: "7777"
@@ -258,9 +261,32 @@ private struct StreamerView: View {
     }
 }
 
+private struct UrlsView: View {
+    let model: Model
+    @ObservedObject var status: StatusOther
+    let port: UInt16
+
+    private func formatUrl(ip: String) -> String {
+        return "ws://\(ip):\(port)"
+    }
+
+    var body: some View {
+        NavigationLink {
+            Form {
+                UrlsIpv4View(model: model, status: status, formatUrl: formatUrl)
+                UrlsIpv6View(model: model, status: status, formatUrl: formatUrl)
+            }
+            .navigationTitle("URLs")
+        } label: {
+            Text("URLs")
+        }
+    }
+}
+
 struct MoblinkSettingsView: View {
     @EnvironmentObject var model: Model
-    @State var streamerEnabled: Bool
+    @ObservedObject var status: StatusOther
+    @ObservedObject var streamer: SettingsMoblinkStreamer
 
     private func submitPassword(value: String) {
         model.database.moblink.password = value.trim()
@@ -292,38 +318,16 @@ struct MoblinkSettingsView: View {
             } footer: {
                 Text("Used by both relay and streamer devices. Copy the streamer's password to the relay device.")
             }
-            RelayView(relay: model.database.moblink.client)
-            StreamerView(enabled: $streamerEnabled)
-            if streamerEnabled {
+            RelayView(relay: model.database.moblink.relay)
+            StreamerView(streamer: streamer)
+            if streamer.enabled {
                 Section {
-                    List {
-                        ForEach(model.ipStatuses.filter { $0.ipType == .ipv4 }) { status in
-                            InterfaceView(
-                                ip: status.ipType.formatAddress(status.ip),
-                                port: model.database.moblink.server.port,
-                                image: urlImage(interfaceType: status.interfaceType)
-                            )
-                        }
-                        InterfaceView(
-                            ip: personalHotspotLocalAddress,
-                            port: model.database.moblink.server.port,
-                            image: "personalhotspot"
-                        )
-                        ForEach(model.ipStatuses.filter { $0.ipType == .ipv6 }) { status in
-                            InterfaceView(
-                                ip: status.ipType.formatAddress(status.ip),
-                                port: model.database.moblink.server.port,
-                                image: urlImage(interfaceType: status.interfaceType)
-                            )
-                        }
-                    }
+                    UrlsView(model: model, status: status, port: streamer.port)
                 } footer: {
-                    VStack(alignment: .leading) {
-                        Text("""
-                        Enter one of the URL:s as "Streamer URL" in the relay device to \
-                        use it as an additional bonding connection.
-                        """)
-                    }
+                    Text("""
+                    Enter one of the URL:s as "Streamer URL" in the relay device to \
+                    use it as an additional bonding connection.
+                    """)
                 }
             }
         }

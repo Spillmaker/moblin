@@ -29,6 +29,12 @@
             "value" : "Moblin"
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -36,6 +42,12 @@
           }
         },
         "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin"
+          }
+        },
+        "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin"
@@ -71,6 +83,12 @@
             "value" : "Moblin"
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -78,6 +96,12 @@
           }
         },
         "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin"
+          }
+        },
+        "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin"
@@ -113,16 +137,34 @@
             "value" : "Moblin tcomunica con DJI usando il Bluetooth."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin communiceert met DJI-camera's via Bluetooth."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin использует Bluetooth для подключения к камерам DJI"
           }
         },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin Bluetooth'u DJI kameraları için kullanır."
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin 使用藍芽與 DJI 設備進行連線"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin 需使用藍牙與 DJI 相機進行通訊。"
           }
         }
       }
@@ -167,16 +209,34 @@
             "value" : "Moblin은 카메라에서 비디오를 실시간 스트리밍합니다."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin streamt live video van de camera."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin транслирует видео с камеры"
           }
         },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin yayın yaparken kameranızı kullanır."
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin 串流影像來自相機。"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin 實況畫面來自相機。"
           }
         }
       }
@@ -209,10 +269,28 @@
             "value" : "Moblin può mostrare la tua frequenza cardiaca in live."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin kan je hartslag weergeven in de stream."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin yayınınızda kalp atış hızınızı gösterebilir."
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin 可以把你的心率顯示在實況上"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin 可以在實況時顯示您的心率。"
           }
         }
       }
@@ -245,10 +323,28 @@
             "value" : "Moblin può mostrare la tua frequenza cardiaca in live."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin kan je hartslag weergeven in de stream."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin yayınınızda kalp atış hızınızı gösterebilir."
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin 可以把你的心率顯示在實況上"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin 可以在實況時顯示您的心率。"
           }
         }
       }
@@ -281,10 +377,28 @@
             "value" : "Moblin può mostrare la tua frequenza cardiaca in live."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin kan je hartslag weergeven in de stream."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin yayınınızda kalp atış hızınızı gösterebilir."
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin 可以把你的心率顯示在實況上"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin 可以在實況時顯示您的心率。"
           }
         }
       }
@@ -329,16 +443,34 @@
             "value" : "Moblin은 SRT 라이브러리에 대한 입력 및 출력으로 localhost를 사용합니다."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin gebruikt localhost als invoer en uitvoer naar de SRT-bibliotheek."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin использует localhost для ввода и вывода в библиотеке SRT"
           }
         },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin yerel ağı SRT kütüphanesi için kullanır."
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin 使用本地端作為 SRT 函式庫的輸入與輸出。"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin 使用本機作為輸入與輸出，連接到 SRT 函式庫。\nMoblin 將使用本機進行影音串流傳輸。"
           }
         }
       }
@@ -371,16 +503,34 @@
             "value" : "Moblin può visualizzare la tua posizione e/o la velocità sullo schermo e in streaming."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin kan uw locatie en/of snelheid op het scherm weergeven en streamen."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin может отображать ваше местоположение и/или скорость на экране и на стриме."
           }
         },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin konumunuzu ve hızınızı yayınınızda gösterebilir."
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin 可以顯示你的位置、時速等資訊於實況畫面上。"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin 可以在實況及畫面上顯示您的定位和移動速度。"
           }
         }
       }
@@ -425,10 +575,22 @@
             "value" : "Moblin은 마이크에서 오디오를 실시간 스트리밍합니다."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin streamt live audio via de microfoon."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin транслирует аудио с микрофона."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin yayın yaparken mikrofonunuzu kullanır."
           }
         },
         "zh-Hant" : {
@@ -479,16 +641,34 @@
             "value" : "Moblin은 선택한 이미지를 오버레이로 표시합니다."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin toont geselecteerde afbeeldingen als overlays."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin отображает выбранные изображения как оверлеи."
           }
         },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin seçilen görüntüleri üst üste yerleştirir."
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin 顯示所選圖片為圖層。"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin 將選定圖片用懸浮顯示。"
           }
         }
       }
@@ -533,16 +713,34 @@
             "value" : "Moblin은 선택한 이미지를 오버레이로 표시합니다."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin toont geselecteerde afbeeldingen als overlays."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin отображает выбранные изображения как оверлеи."
           }
         },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin seçilen görüntüleri üst üste yerleştirir."
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin 顯示所選圖片為圖層。"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin 將選定圖片用懸浮顯示。"
           }
         }
       }
@@ -575,10 +773,28 @@
             "value" : "Moblin può aggiungere la trascrizione alla stream."
           }
         },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin kan transcriptie aan de stream toevoegen."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin yayınınızda altyazı ekleyebilir."
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Moblin 可以增加轉場到實況中"
+          }
+        },
+        "zh-Hant-TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moblin 可以將語音自動轉成文字顯示於實況。"
           }
         }
       }

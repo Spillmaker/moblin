@@ -1,5 +1,5 @@
 // SRTLA is a bonding protocol on top of SRT.
-// Designed by rationalsa for the BELABOX projecct.
+// Designed by rationalsa for the BELABOX project.
 // https://github.com/BELABOX/srtla
 
 import AVFoundation
@@ -258,6 +258,6 @@ class SrtlaServer {
     }
 
     private func sendPacket(connection: NWConnection, packet: Data) {
-        connection.send(content: packet, completion: .contentProcessed { _ in })
+        connection.send(content: packet, completion: .idempotent)
     }
 }

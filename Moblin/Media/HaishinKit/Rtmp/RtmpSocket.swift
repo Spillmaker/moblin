@@ -11,33 +11,22 @@ enum RtmpSocketReadyState {
 
 protocol RtmpSocketDelegate: AnyObject {
     func socketDataReceived(_ socket: RtmpSocket, data: Data) -> Data
-    func socketReadyStateChanged(_ socket: RtmpSocket, readyState: RtmpSocketReadyState)
-    func socketUpdateStats(_ socket: RtmpSocket, totalBytesOut: Int64)
-    func socketDispatch(_ socket: RtmpSocket, event: RtmpEvent)
+    func socketReadyStateChanged(readyState: RtmpSocketReadyState)
+    func socketUpdateStats(totalBytesSent: Int64)
+    func socketPost(data: AsObject)
 }
 
 final class RtmpSocket {
     var maximumChunkSizeFromServer = RtmpChunk.defaultSize
     var maximumChunkSizeToServer = RtmpChunk.defaultSize
     private var readyState: RtmpSocketReadyState = .uninitialized
-    var secure = false {
-        didSet {
-            if secure {
-                tlsOptions = .init()
-            } else {
-                tlsOptions = nil
-            }
-        }
-    }
-
     private var inputBuffer = Data()
     weak var delegate: (any RtmpSocketDelegate)?
-    private(set) var totalBytesIn: Atomic<Int64> = .init(0)
-    private(set) var totalBytesOut: Atomic<Int64> = .init(0)
+    private var totalBytesSent: Int64 = 0
     private(set) var connected = false {
         didSet {
             if connected {
-                write(data: handshake.createC0C1Packet())
+                write(data: RtmpHandshake.createC0C1Packet())
                 setReadyState(state: .versionSent)
             } else {
                 setReadyState(state: .closed)
@@ -45,7 +34,6 @@ final class RtmpSocket {
         }
     }
 
-    private var handshake = RtmpHandshake()
     private var connection: NWConnection? {
         didSet {
             oldValue?.viabilityUpdateHandler = nil
@@ -57,25 +45,27 @@ final class RtmpSocket {
         }
     }
 
-    private var tlsOptions: NWProtocolTLS.Options?
     private var timeoutHandler: DispatchWorkItem?
+    private let name: String
 
-    func connect(host: String, port: Int) {
-        handshake = RtmpHandshake()
+    init(name: String) {
+        self.name = name
+    }
+
+    func connect(host: String, port: Int, tlsOptions: NWProtocolTLS.Options?) {
         setReadyState(state: .uninitialized)
         maximumChunkSizeToServer = RtmpChunk.defaultSize
         maximumChunkSizeFromServer = RtmpChunk.defaultSize
-        totalBytesIn.mutate { $0 = 0 }
-        totalBytesOut.mutate { $0 = 0 }
+        totalBytesSent = 0
         inputBuffer.removeAll(keepingCapacity: false)
         connection = NWConnection(
-            to: .hostPort(host: .init(host), port: .init(integerLiteral: NWEndpoint.Port.IntegerLiteralType(port))),
+            to: .hostPort(host: .init(host), port: .init(integer: port)),
             using: .init(tls: tlsOptions)
         )
         if let connection {
             connection.viabilityUpdateHandler = viabilityDidChange
             connection.stateUpdateHandler = stateDidChange
-            connection.start(queue: netStreamLockQueue)
+            connection.start(queue: processorControlQueue)
             receive(on: connection)
         }
         timeoutHandler = DispatchWorkItem { [weak self] in
@@ -84,7 +74,7 @@ final class RtmpSocket {
             }
             self.handleConnectTimeout()
         }
-        netStreamLockQueue.asyncAfter(deadline: .now() + .seconds(10), execute: timeoutHandler!)
+        processorControlQueue.asyncAfter(deadline: .now() + .seconds(10), execute: timeoutHandler!)
     }
 
     func close(isDisconnected: Bool = false) {
@@ -108,7 +98,7 @@ final class RtmpSocket {
             } else {
                 data = RtmpConnectionCode.connectFailed.eventData()
             }
-            delegate?.socketDispatch(self, event: RtmpEvent(type: .rtmpStatus, data: data))
+            delegate?.socketPost(data: data)
         }
         timeoutHandler?.cancel()
     }
@@ -124,9 +114,9 @@ final class RtmpSocket {
         guard readyState != state else {
             return
         }
-        logger.info("rtmp: Setting socket state \(readyState) -> \(state)")
+        logger.info("rtmp: \(name): Setting socket state \(readyState) -> \(state)")
         readyState = state
-        delegate?.socketReadyStateChanged(self, readyState: readyState)
+        delegate?.socketReadyStateChanged(readyState: readyState)
     }
 
     private func write(data: Data) {
@@ -138,13 +128,13 @@ final class RtmpSocket {
                 self.close(isDisconnected: true)
                 return
             }
-            self.totalBytesOut.mutate { $0 += Int64(data.count) }
-            self.delegate?.socketUpdateStats(self, totalBytesOut: self.totalBytesOut.value)
+            self.totalBytesSent += Int64(data.count)
+            self.delegate?.socketUpdateStats(totalBytesSent: self.totalBytesSent)
         })
     }
 
     private func viabilityDidChange(to viability: Bool) {
-        logger.info("rtmp: Connection viability changed to \(viability)")
+        logger.info("rtmp: \(name): Connection viability changed to \(viability)")
         if !viability {
             close(isDisconnected: true)
         }
@@ -153,23 +143,23 @@ final class RtmpSocket {
     private func stateDidChange(to state: NWConnection.State) {
         switch state {
         case .ready:
-            logger.info("rtmp: Connection is ready.")
+            logger.info("rtmp: \(name): Connection is ready.")
             timeoutHandler?.cancel()
             connected = true
         case let .waiting(error):
-            logger.info("rtmp: Connection waiting: \(error)")
+            logger.info("rtmp: \(name): Connection waiting: \(error)")
         case .setup:
-            logger.debug("rtmp: Connection is setting up.")
+            logger.debug("rtmp: \(name): Connection is setting up.")
         case .preparing:
-            logger.debug("rtmp: Connection is preparing.")
+            logger.debug("rtmp: \(name): Connection is preparing.")
         case let .failed(error):
-            logger.info("rtmp: Connection failed: \(error)")
+            logger.info("rtmp: \(name): Connection failed: \(error)")
             close(isDisconnected: true)
         case .cancelled:
-            logger.info("rtmp: Connection cancelled.")
+            logger.info("rtmp: \(name): Connection cancelled.")
             close(isDisconnected: true)
         @unknown default:
-            logger.error("rtmp: Unknown connection state.")
+            logger.error("rtmp: \(name): Unknown connection state.")
         }
     }
 
@@ -179,7 +169,6 @@ final class RtmpSocket {
                 return
             }
             self.inputBuffer.append(data)
-            self.totalBytesIn.mutate { $0 += Int64(data.count) }
             self.processInput()
             self.receive(on: connection)
         }
@@ -202,7 +191,7 @@ final class RtmpSocket {
         guard inputBuffer.count >= RtmpHandshake.sigSize + 1 else {
             return
         }
-        write(data: handshake.createC2Packet(inputBuffer))
+        write(data: RtmpHandshake.createC2Packet(inputBuffer))
         inputBuffer.removeSubrange(0 ... RtmpHandshake.sigSize)
         setReadyState(state: .ackSent)
         processInput()
@@ -224,7 +213,7 @@ final class RtmpSocket {
     }
 
     private func handleConnectTimeout() {
-        logger.info("rtmp: Connect timeout")
+        logger.info("rtmp: \(name): Connect timeout")
         close(isDisconnected: true)
     }
 }

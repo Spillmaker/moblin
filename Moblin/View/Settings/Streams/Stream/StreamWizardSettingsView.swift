@@ -2,78 +2,75 @@ import SwiftUI
 
 struct WizardNextButtonView: View {
     var body: some View {
-        HStack {
-            Spacer()
+        HCenter {
             Text("Next")
-                .foregroundColor(.accentColor)
-            Spacer()
+                .foregroundStyle(Color.accentColor)
         }
     }
 }
 
 struct WizardSkipButtonView: View {
     var body: some View {
-        HStack {
-            Spacer()
+        HCenter {
             Text("Skip")
-                .foregroundColor(.accentColor)
-            Spacer()
+                .foregroundStyle(Color.accentColor)
         }
     }
 }
 
 struct CreateStreamWizardToolbar: ToolbarContent {
-    @EnvironmentObject var model: Model
+    @ObservedObject var createStreamWizard: CreateStreamWizard
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .navigationBarTrailing) {
-            HStack {
-                Button {
-                    model.isPresentingWizard = false
-                    model.isPresentingSetupWizard = false
-                } label: {
-                    Text("Close")
-                }
+            Button {
+                createStreamWizard.isPresenting = false
+                createStreamWizard.isPresentingSetup = false
+            } label: {
+                Image(systemName: "xmark")
             }
         }
     }
 }
 
 struct StreamWizardSettingsView: View {
+    let model: Model
+    let createStreamWizard: CreateStreamWizard
+
     var body: some View {
         Form {
             Section {
                 NavigationLink {
-                    StreamWizardTwitchSettingsView()
+                    StreamWizardTwitchSettingsView(createStreamWizard: createStreamWizard)
                 } label: {
-                    Text("Twitch")
+                    TwitchLogoAndNameView()
                 }
                 NavigationLink {
-                    StreamWizardKickSettingsView()
+                    StreamWizardKickSettingsView(createStreamWizard: createStreamWizard)
                 } label: {
-                    Text("Kick")
+                    KickLogoAndNameView()
                 }
                 NavigationLink {
-                    StreamWizardYouTubeSettingsView()
+                    StreamWizardYouTubeSettingsView(createStreamWizard: createStreamWizard)
                 } label: {
-                    Text("YouTube")
+                    YouTubeLogoAndNameView()
                 }
                 NavigationLink {
-                    StreamWizardAfreecaTvSettingsView()
+                    StreamWizardSoopSettingsView(createStreamWizard: createStreamWizard)
                 } label: {
-                    Text("AfreecaTV")
+                    SoopLogoAndNameView()
                 }
                 NavigationLink {
-                    StreamWizardObsSettingsView()
+                    StreamWizardObsSettingsView(createStreamWizard: createStreamWizard)
                 } label: {
-                    Text("OBS")
+                    ObsLogoAndNameView()
                 }
             } header: {
                 Text("Platform to stream to")
             }
             Section {
                 NavigationLink {
-                    StreamWizardCustomSettingsView()
+                    StreamWizardCustomSettingsView(model: model, createStreamWizard: createStreamWizard)
                 } label: {
                     Text("Custom")
                 }
@@ -83,7 +80,7 @@ struct StreamWizardSettingsView: View {
         }
         .navigationTitle("Create stream wizard")
         .toolbar {
-            CreateStreamWizardToolbar()
+            CreateStreamWizardToolbar(createStreamWizard: createStreamWizard)
         }
     }
 }

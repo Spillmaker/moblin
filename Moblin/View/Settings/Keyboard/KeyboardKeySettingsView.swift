@@ -30,9 +30,11 @@ struct KeyboardKeySettingsView: View {
         NavigationLink {
             Form {
                 Section {
-                    TextEditNavigationView(title: "Key", value: key.key) {
-                        key.key = $0
-                    }
+                    TextEditNavigationView(title: String(localized: "Key"),
+                                           value: key.key,
+                                           onSubmit: {
+                                               key.key = $0
+                                           })
                 }
                 Section {
                     NavigationLink {
@@ -84,7 +86,7 @@ struct KeyboardKeySettingsView: View {
                 Text(key.key)
                 Spacer()
                 Text(keyText())
-                    .foregroundColor(keyColor())
+                    .foregroundStyle(keyColor())
             }
         }
     }

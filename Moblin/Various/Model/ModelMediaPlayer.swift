@@ -1,6 +1,14 @@
 import CoreMedia
 import Foundation
 
+class MediaPlayerPlayer: ObservableObject {
+    @Published var playing = false
+    @Published var position: Float = 0
+    @Published var time = "0:00"
+    @Published var fileName = "Media name"
+    @Published var seeking = false
+}
+
 extension Model {
     func initMediaPlayers() {
         for settings in database.mediaPlayers.players {
@@ -27,10 +35,12 @@ extension Model {
         let mediaPlayer = MediaPlayer(settings: settings, mediaStorage: mediaStorage)
         mediaPlayer.delegate = self
         mediaPlayers[settings.id] = mediaPlayer
+        updateMicsListAsync()
     }
 
     func deleteMediaPlayer(playerId: UUID) {
         mediaPlayers.removeValue(forKey: playerId)
+        updateMicsListAsync()
     }
 
     func updateMediaPlayerSettings(playerId: UUID, settings: SettingsMediaPlayer) {
@@ -41,12 +51,12 @@ extension Model {
         guard let mediaPlayer = getCurrentMediaPlayer() else {
             return
         }
-        if mediaPlayerPlaying {
+        if mediaPlayerPlayer.playing {
             mediaPlayer.pause()
         } else {
             mediaPlayer.play()
         }
-        mediaPlayerPlaying = !mediaPlayerPlaying
+        mediaPlayerPlayer.playing = !mediaPlayerPlayer.playing
     }
 
     func mediaPlayerNext() {
@@ -69,10 +79,10 @@ extension Model {
         guard let scene = getSelectedScene() else {
             return nil
         }
-        guard scene.cameraPosition == .mediaPlayer else {
+        guard scene.videoSource.cameraPosition == .mediaPlayer else {
             return nil
         }
-        guard let mediaPlayerSettings = getMediaPlayer(id: scene.mediaPlayerCameraId) else {
+        guard let mediaPlayerSettings = getMediaPlayer(id: scene.videoSource.mediaPlayerCameraId) else {
             return nil
         }
         return mediaPlayers[mediaPlayerSettings.id]
@@ -84,13 +94,15 @@ extension Model {
         }
     }
 
-    func playerCameras() -> [String] {
-        return database.mediaPlayers.players.map { $0.camera() }
+    func playerCameras() -> [(UUID, String)] {
+        return database.mediaPlayers.players.map {
+            ($0.id, $0.camera())
+        }
     }
 
-    func getMediaPlayer(camera: String) -> SettingsMediaPlayer? {
+    func getMediaPlayer(idString: String) -> SettingsMediaPlayer? {
         return database.mediaPlayers.players.first {
-            $0.camera() == camera
+            idString == $0.id.uuidString
         }
     }
 
@@ -107,7 +119,7 @@ extension Model {
 
 extension Model: MediaPlayerDelegate {
     func mediaPlayerFileLoaded(playerId: UUID, name: String) {
-        let name = "Media player file \(name)"
+        let name = "Media player: \(name)"
         let latency = mediaPlayerLatency
         media.addBufferedVideo(cameraId: playerId, name: name, latency: latency)
         media.addBufferedAudio(cameraId: playerId, name: name, latency: latency)
@@ -129,12 +141,12 @@ extension Model: MediaPlayerDelegate {
         time: String
     ) {
         DispatchQueue.main.async {
-            self.mediaPlayerPlaying = playing
-            self.mediaPlayerFileName = name
-            if !self.mediaPlayerSeeking {
-                self.mediaPlayerPosition = Float(position)
+            self.mediaPlayerPlayer.playing = playing
+            self.mediaPlayerPlayer.fileName = name
+            if !self.mediaPlayerPlayer.seeking {
+                self.mediaPlayerPlayer.position = Float(position)
             }
-            self.mediaPlayerTime = time
+            self.mediaPlayerPlayer.time = time
         }
     }
 

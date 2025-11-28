@@ -1,39 +1,9 @@
 import SwiftUI
 
-private struct InterfaceViewUrl: View {
-    @EnvironmentObject var model: Model
-    var url: String
-    var image: String
-
-    var body: some View {
-        HStack {
-            Image(systemName: image)
-            Text(url)
-            Spacer()
-            Button {
-                UIPasteboard.general.string = url
-                model.makeToast(title: "URL copied to clipboard")
-            } label: {
-                Image(systemName: "doc.on.doc")
-            }
-        }
-    }
-}
-
-private struct InterfaceView: View {
-    var ip: String
-    var port: UInt16
-    var image: String
-
-    var body: some View {
-        InterfaceViewUrl(url: "ws://\(ip):\(port)", image: image)
-    }
-}
-
 private struct PasswordView: View {
     @EnvironmentObject var model: Model
     @State var value: String
-    var onSubmit: (String) -> Void
+    let onSubmit: (String) -> Void
     @State private var changed = false
     @State private var submitted = false
     @State private var message: String?
@@ -84,18 +54,14 @@ private struct PasswordView: View {
             } footer: {
                 if let message {
                     Text(message)
-                        .foregroundColor(.red)
+                        .foregroundStyle(.red)
                         .bold()
                 }
             }
             Section {
-                Button {
+                TextButtonView("Generate") {
                     value = randomGoodPassword()
                     submit()
-                } label: {
-                    HCenter {
-                        Text("Generate")
-                    }
                 }
             }
         }
@@ -104,19 +70,19 @@ private struct PasswordView: View {
 }
 
 private struct RemoteControlSettingsStreamerView: View {
-    @EnvironmentObject var model: Model
-    @ObservedObject var database: Database
+    let model: Model
+    @ObservedObject var streamer: SettingsRemoteControlStreamer
 
     private func submitStreamerUrl(value: String) {
         guard isValidWebSocketUrl(url: value) == nil else {
             return
         }
-        database.remoteControl.server.url = value
+        streamer.url = value
         model.reloadRemoteControlStreamer()
     }
 
     private func submitStreamerPreviewFps(value: Float) {
-        database.remoteControl.server.previewFps = value
+        streamer.previewFps = value
         model.setLowFpsImage()
     }
 
@@ -126,17 +92,14 @@ private struct RemoteControlSettingsStreamerView: View {
 
     var body: some View {
         Section {
-            Toggle(isOn: Binding(get: {
-                database.remoteControl.server.enabled
-            }, set: { value in
-                database.remoteControl.server.enabled = value
-                model.reloadRemoteControlStreamer()
-            })) {
-                Text("Enabled")
-            }
+            Toggle("Enabled", isOn: $streamer.enabled)
+                .onChange(of: streamer.enabled) { _ in
+                    model.reloadRemoteControlStreamer()
+                }
             TextEditNavigationView(
                 title: String(localized: "Assistant URL"),
-                value: database.remoteControl.server.url,
+                value: streamer.url,
+                onChange: isValidWebSocketUrl,
                 onSubmit: submitStreamerUrl,
                 footers: [
                     String(
@@ -148,8 +111,8 @@ private struct RemoteControlSettingsStreamerView: View {
             HStack {
                 Text("Preview FPS")
                 SliderView(
-                    value: database.remoteControl.server.previewFps!,
-                    minimum: 1,
+                    value: streamer.previewFps,
+                    minimum: 0,
                     maximum: 5,
                     step: 1,
                     onSubmit: submitStreamerPreviewFps,
@@ -168,91 +131,239 @@ private struct RemoteControlSettingsStreamerView: View {
     }
 }
 
-private struct RemoteControlSettingsAssistantView: View {
-    @EnvironmentObject var model: Model
-    @ObservedObject var database: Database
+private struct UrlsView: View {
+    let model: Model
+    @ObservedObject var relay: SettingsRemoteControlServerRelay
+    @Binding var port: UInt16
+    let status: StatusOther
 
-    private func submitAssistantPort(value: String) {
-        guard let port = UInt16(value.trim()) else {
+    private func formatUrl(ip: String) -> String {
+        return "ws://\(ip):\(port)"
+    }
+
+    var body: some View {
+        Section {
+            NavigationLink {
+                Form {
+                    if relay.enabled {
+                        Section {
+                            UrlCopyView(model: model,
+                                        url: "\(relay.baseUrl)/streamer/\(relay.bridgeId)",
+                                        image: "globe")
+                        } header: {
+                            Text("Relay")
+                        }
+                    }
+                    UrlsIpv4View(model: model, status: status, formatUrl: formatUrl)
+                    UrlsIpv6View(model: model, status: status, formatUrl: formatUrl)
+                }
+                .navigationTitle("URLs")
+            } label: {
+                Text("URLs")
+            }
+        } footer: {
+            VStack(alignment: .leading) {
+                Text("""
+                Enter one of the URLs as "Assistant URL" in the streamer device to \
+                connect to this device.
+                """)
+            }
+        }
+    }
+}
+
+private struct StreamerView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var remoteControlSettings: SettingsRemoteControl
+    @ObservedObject var remoteControl: RemoteControl
+    @ObservedObject var streamer: SettingsRemoteControlAssistant
+
+    private func reloadIfEnabled() {
+        guard streamer.id == remoteControlSettings.selectedStreamer else {
             return
         }
-        database.remoteControl.client.port = port
+        let assistant = model.database.remoteControl.assistant
+        assistant.enabled = streamer.enabled
+        assistant.port = streamer.port
+        assistant.relay.enabled = streamer.relay.enabled
+        assistant.relay.baseUrl = streamer.relay.baseUrl
+        assistant.relay.bridgeId = streamer.relay.bridgeId
+        model.reloadRemoteControlRelay()
+        model.reloadRemoteControlAssistant()
+    }
+
+    private func submitAssistantPort(value: String) {
+        guard let port = UInt16(value) else {
+            return
+        }
+        streamer.port = port
+        reloadIfEnabled()
+    }
+
+    private func submitAssistantRelayUrl(value: String) {
+        streamer.relay.baseUrl = value
+        reloadIfEnabled()
+    }
+
+    private func changeAssistantRelayBridgeId(value: String) -> String? {
+        guard !value.isEmpty else {
+            return String(localized: "Empty")
+        }
+        return nil
+    }
+
+    private func submitAssistantRelayBridgeId(value: String) {
+        streamer.relay.bridgeId = value
+        reloadIfEnabled()
+    }
+
+    var body: some View {
+        NavigationLink {
+            Form {
+                Section {
+                    NameEditView(name: $streamer.name, existingNames: remoteControlSettings.streamers)
+                }
+                Section {
+                    Toggle("Enabled", isOn: $streamer.enabled)
+                        .onChange(of: streamer.enabled) { _ in
+                            reloadIfEnabled()
+                        }
+                    TextEditNavigationView(
+                        title: String(localized: "Server port"),
+                        value: String(streamer.port),
+                        onChange: isValidPort,
+                        onSubmit: submitAssistantPort,
+                        keyboardType: .numbersAndPunctuation,
+                        placeholder: "2345"
+                    )
+                } header: {
+                    Text("Assistant")
+                }
+                Section {
+                    Toggle("Enabled", isOn: $streamer.relay.enabled)
+                        .onChange(of: streamer.enabled) { _ in
+                            reloadIfEnabled()
+                        }
+                    TextEditNavigationView(
+                        title: String(localized: "Base URL"),
+                        value: streamer.relay.baseUrl,
+                        onChange: isValidWebSocketUrl,
+                        onSubmit: submitAssistantRelayUrl
+                    )
+                    TextEditNavigationView(
+                        title: String(localized: "Bridge id"),
+                        value: streamer.relay.bridgeId,
+                        onChange: changeAssistantRelayBridgeId,
+                        onSubmit: submitAssistantRelayBridgeId,
+                        sensitive: true
+                    )
+                } header: {
+                    Text("Relay")
+                } footer: {
+                    Text("Use a relay server when the assistant is behind CGNAT or similar.")
+                }
+                if streamer.enabled {
+                    UrlsView(model: model,
+                             relay: streamer.relay,
+                             port: $streamer.port,
+                             status: model.statusOther)
+                }
+            }
+            .navigationTitle("Streamer")
+        } label: {
+            HStack {
+                DraggableItemPrefixView()
+                Text(streamer.name)
+                Spacer()
+            }
+        }
+    }
+}
+
+private struct StreamerItemView: View {
+    @ObservedObject var streamer: SettingsRemoteControlAssistant
+
+    var body: some View {
+        Text(streamer.name)
+            .tag(streamer.id as UUID?)
+    }
+}
+
+struct RemoteControlStreamersView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var remoteControlSettings: SettingsRemoteControl
+    @ObservedObject var remoteControl: RemoteControl
+
+    private func onStreamerChanged() {
+        let assistant = model.database.remoteControl.assistant
+        if let streamer = remoteControlSettings.streamers
+            .first(where: { $0.id == remoteControlSettings.selectedStreamer })
+        {
+            assistant.enabled = streamer.enabled
+            assistant.port = streamer.port
+            assistant.relay.enabled = streamer.relay.enabled
+            assistant.relay.baseUrl = streamer.relay.baseUrl
+            assistant.relay.bridgeId = streamer.relay.bridgeId
+        } else {
+            assistant.enabled = false
+            assistant.relay.enabled = false
+        }
+        model.reloadRemoteControlRelay()
         model.reloadRemoteControlAssistant()
     }
 
     var body: some View {
         Section {
-            Toggle(isOn: Binding(get: {
-                database.remoteControl.client.enabled
-            }, set: { value in
-                database.remoteControl.client.enabled = value
-                model.reloadRemoteControlAssistant()
-                model.objectWillChange.send()
-            })) {
-                Text("Enabled")
+            Picker("Current streamer", selection: $remoteControlSettings.selectedStreamer) {
+                Text("-- None --")
+                    .tag(nil as UUID?)
+                ForEach(remoteControlSettings.streamers) { streamer in
+                    StreamerItemView(streamer: streamer)
+                }
             }
-            TextEditNavigationView(
-                title: String(localized: "Server port"),
-                value: String(database.remoteControl.client.port),
-                onSubmit: submitAssistantPort,
-                keyboardType: .numbersAndPunctuation,
-                placeholder: "2345"
-            )
-        } header: {
-            Text("Assistant")
+            .onChange(of: remoteControlSettings.selectedStreamer) { _ in
+                onStreamerChanged()
+            }
         } footer: {
             Text("""
-            Enable to let a streamer device connect to this device. Once connected, \
-            this device can monitor and control the streamer device.
+            Select a streamer. Once the streamer has connected to this device, \
+            this device can monitor and control it.
             """)
         }
-    }
-}
-
-private struct RemoteControlSettingsRelayView: View {
-    @EnvironmentObject var model: Model
-    @ObservedObject var database: Database
-
-    private func submitAssistantRelayUrl(value: String) {
-        guard isValidWebSocketUrl(url: value) == nil else {
-            return
-        }
-        database.remoteControl.client.relay!.baseUrl = value
-        model.reloadRemoteControlRelay()
-    }
-
-    private func submitAssistantRelayBridgeId(value: String) {
-        guard !value.isEmpty else {
-            return
-        }
-        database.remoteControl.client.relay!.bridgeId = value
-        model.reloadRemoteControlRelay()
-    }
-
-    var body: some View {
         Section {
-            Toggle(isOn: Binding(get: {
-                database.remoteControl.client.relay!.enabled
-            }, set: { value in
-                database.remoteControl.client.relay!.enabled = value
-                model.reloadRemoteControlRelay()
-            })) {
-                Text("Enabled")
+            List {
+                ForEach(remoteControlSettings.streamers) { streamer in
+                    StreamerView(remoteControlSettings: remoteControlSettings,
+                                 remoteControl: remoteControl,
+                                 streamer: streamer)
+                }
+                .onDelete {
+                    remoteControlSettings.streamers.remove(atOffsets: $0)
+                    guard remoteControlSettings.selectedStreamer != nil else {
+                        return
+                    }
+                    guard !remoteControlSettings.streamers
+                        .contains(where: { $0.id == remoteControlSettings.selectedStreamer })
+                    else {
+                        return
+                    }
+                    remoteControlSettings.selectedStreamer = nil
+                    onStreamerChanged()
+                }
+                .onMove { froms, to in
+                    remoteControlSettings.streamers.move(fromOffsets: froms, toOffset: to)
+                }
             }
-            TextEditNavigationView(
-                title: String(localized: "Base URL"),
-                value: database.remoteControl.client.relay!.baseUrl,
-                onSubmit: submitAssistantRelayUrl
-            )
-            TextEditNavigationView(
-                title: String(localized: "Bridge id"),
-                value: database.remoteControl.client.relay!.bridgeId,
-                onSubmit: submitAssistantRelayBridgeId
-            )
-        } header: {
-            Text("Relay")
+            TextButtonView("Create") {
+                let streamer = SettingsRemoteControlAssistant()
+                streamer.name = makeUniqueName(name: SettingsRemoteControlAssistant.baseName,
+                                               existingNames: remoteControlSettings.streamers)
+                streamer.enabled = true
+                streamer.port = 2345
+                remoteControlSettings.streamers.append(streamer)
+            }
         } footer: {
-            Text("Use a relay server when the assistant is behind CGNAT or similar.")
+            SwipeLeftToDeleteHelpView(kind: String(localized: "a streamer"))
         }
     }
 }
@@ -260,6 +371,9 @@ private struct RemoteControlSettingsRelayView: View {
 struct RemoteControlSettingsView: View {
     @EnvironmentObject var model: Model
     @ObservedObject var database: Database
+    @ObservedObject var status: StatusOther
+    @ObservedObject var assistant: SettingsRemoteControlAssistant
+    @Binding var stream: SettingsStream
 
     private func submitPassword(value: String) {
         database.remoteControl.password = value.trim()
@@ -267,41 +381,37 @@ struct RemoteControlSettingsView: View {
         model.reloadRemoteControlAssistant()
     }
 
-    private func relayUrl() -> String {
-        let relay = database.remoteControl.client.relay!
-        return "\(relay.baseUrl)/streamer/\(relay.bridgeId)"
-    }
-
     var body: some View {
         Form {
             Section {
                 Text("Control and monitor Moblin from another device.")
             }
-            Section {
-                NavigationLink {
-                    StreamObsRemoteControlSettingsView(stream: model.stream)
-                } label: {
-                    Toggle(isOn: Binding(get: {
-                        model.stream.obsWebSocketEnabled
-                    }, set: {
-                        model.setObsRemoteControlEnabled(enabled: $0)
-                    })) {
-                        Label("OBS remote control", systemImage: "dot.radiowaves.left.and.right")
+            if stream !== fallbackStream {
+                Section {
+                    NavigationLink {
+                        StreamObsRemoteControlSettingsView(stream: stream)
+                    } label: {
+                        Toggle(isOn: $stream.obsWebSocketEnabled) {
+                            Label("OBS remote control", systemImage: "dot.radiowaves.left.and.right")
+                        }
+                        .onChange(of: stream.obsWebSocketEnabled) { _ in
+                            model.obsWebSocketEnabledUpdated()
+                        }
                     }
+                } header: {
+                    Text("Shortcut")
                 }
-            } header: {
-                Text("Shortcut")
             }
             Section {
                 NavigationLink {
                     PasswordView(
-                        value: database.remoteControl.password!,
+                        value: database.remoteControl.password,
                         onSubmit: submitPassword
                     )
                 } label: {
                     TextItemView(
                         name: String(localized: "Password"),
-                        value: database.remoteControl.password!,
+                        value: database.remoteControl.password,
                         sensitive: true
                     )
                 }
@@ -310,42 +420,16 @@ struct RemoteControlSettingsView: View {
             } footer: {
                 Text("Used by both streamer and assistant.")
             }
-            RemoteControlSettingsStreamerView(database: database)
-            RemoteControlSettingsAssistantView(database: database)
-            RemoteControlSettingsRelayView(database: database)
-            if database.remoteControl.client.enabled {
-                Section {
-                    List {
-                        ForEach(model.ipStatuses.filter { $0.ipType == .ipv4 }) { status in
-                            InterfaceView(
-                                ip: status.ipType.formatAddress(status.ip),
-                                port: database.remoteControl.client.port,
-                                image: urlImage(interfaceType: status.interfaceType)
-                            )
-                        }
-                        InterfaceView(
-                            ip: personalHotspotLocalAddress,
-                            port: database.remoteControl.client.port,
-                            image: "personalhotspot"
-                        )
-                        ForEach(model.ipStatuses.filter { $0.ipType == .ipv6 }) { status in
-                            InterfaceView(
-                                ip: status.ipType.formatAddress(status.ip),
-                                port: database.remoteControl.client.port,
-                                image: urlImage(interfaceType: status.interfaceType)
-                            )
-                        }
-                        if database.remoteControl.client.relay!.enabled {
-                            InterfaceViewUrl(url: relayUrl(), image: "globe")
-                        }
+            RemoteControlSettingsStreamerView(model: model, streamer: database.remoteControl.streamer)
+            Section {
+                NavigationLink {
+                    Form {
+                        RemoteControlStreamersView(remoteControlSettings: database.remoteControl,
+                                                   remoteControl: model.remoteControl)
                     }
-                } footer: {
-                    VStack(alignment: .leading) {
-                        Text("""
-                        Enter one of the URLs as "Assistant URL" in the streamer device to \
-                        connect to this device.
-                        """)
-                    }
+                    .navigationTitle("Assistant")
+                } label: {
+                    Text("Assistant")
                 }
             }
         }

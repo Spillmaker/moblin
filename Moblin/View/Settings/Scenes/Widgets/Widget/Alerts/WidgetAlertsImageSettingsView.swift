@@ -27,7 +27,7 @@ func loadAlertImage(model: Model, imageId: UUID) -> Data? {
 
 private struct CustomImageView: View {
     @EnvironmentObject var model: Model
-    var media: SettingsAlertsMediaGalleryItem
+    let media: SettingsAlertsMediaGalleryItem
     @State var showPicker = false
     @State var image: Data?
 
@@ -78,7 +78,7 @@ private struct CustomImageView: View {
 
 private struct ImageGalleryView: View {
     @EnvironmentObject var model: Model
-    var alert: SettingsWidgetAlertsAlert
+    let alert: SettingsWidgetAlertsAlert
     @Binding var imageId: UUID
 
     var body: some View {
@@ -95,20 +95,16 @@ private struct ImageGalleryView: View {
                             Text(image.name)
                         }
                     }
-                    .onDelete(perform: { offsets in
+                    .onDelete { offsets in
                         model.database.alertsMediaGallery.customImages.remove(atOffsets: offsets)
                         model.fixAlertMedias()
                         imageId = alert.imageId
-                    })
+                    }
                 }
-                Button {
+                TextButtonView("Add") {
                     let image = SettingsAlertsMediaGalleryItem(name: "My image")
                     model.database.alertsMediaGallery.customImages.append(image)
                     model.objectWillChange.send()
-                } label: {
-                    HCenter {
-                        Text("Add")
-                    }
                 }
             } footer: {
                 SwipeLeftToDeleteHelpView(kind: String(localized: "an image"))
@@ -120,7 +116,7 @@ private struct ImageGalleryView: View {
 
 struct AlertImageSelectorView: View {
     @EnvironmentObject var model: Model
-    var alert: SettingsWidgetAlertsAlert
+    let alert: SettingsWidgetAlertsAlert
     @Binding var imageId: UUID
     @State var loopCount: Float
 
@@ -157,6 +153,9 @@ struct AlertImageSelectorView: View {
                         value: $loopCount,
                         in: 1 ... 10,
                         step: 1,
+                        label: {
+                            EmptyView()
+                        },
                         onEditingChanged: { begin in
                             guard !begin else {
                                 return
@@ -180,71 +179,5 @@ struct AlertImageSelectorView: View {
             }
         }
         .navigationTitle("Image")
-    }
-}
-
-struct AlertImagePlaygroundSelectorView: View {
-    @EnvironmentObject var model: Model
-    var command: SettingsWidgetAlertsChatBotCommand
-    @State var selectedImageItem: PhotosPickerItem?
-    @State var imageId: UUID
-
-    func loadImage() -> UIImage? {
-        if let data = model.alertMediaStorage.tryRead(id: imageId) {
-            return UIImage(data: data)
-        } else {
-            return nil
-        }
-    }
-
-    var body: some View {
-        Form {
-            Section {
-                Text("Use Image Playground to create an image from a photo and/or prompt written by your viewers.")
-            }
-            Section {
-                PhotosPicker(selection: $selectedImageItem, matching: .images) {
-                    if let image = loadImage() {
-                        HCenter {
-                            Image(uiImage: image)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 1920 / 6, height: 1080 / 6)
-                        }
-                    } else {
-                        HCenter {
-                            Text("Select photo")
-                        }
-                    }
-                }
-                .onChange(of: selectedImageItem) { imageItem in
-                    imageItem?.loadTransferable(type: Data.self) { result in
-                        switch result {
-                        case let .success(data?):
-                            model.alertMediaStorage.write(id: imageId, data: data)
-                            DispatchQueue.main.async {
-                                selectedImageItem = nil
-                            }
-                        case .success(nil):
-                            logger.error("alert-widget: Seleted image is nil")
-                        case let .failure(error):
-                            logger.error("alert-widget: Selected image error: \(error)")
-                        }
-                    }
-                }
-            }
-            Section {
-                Button(role: .destructive) {
-                    command.imagePlaygroundImageId = .init()
-                    imageId = command.imagePlaygroundImageId!
-                    model.updateAlertsSettings()
-                } label: {
-                    HCenter {
-                        Text("Delete")
-                    }
-                }
-            }
-        }
-        .navigationTitle("Image Playground")
     }
 }

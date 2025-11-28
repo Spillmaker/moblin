@@ -1,7 +1,9 @@
 import SwiftUI
 
 let zoomSegmentWidth = 50.0
+let zoomSegmentWidthBig = 60.0
 let segmentHeight = 40.0
+let segmentHeightBig = 60.0
 let sceneSegmentWidth = 70.0
 let sliderWidth = 250.0
 let sliderHeight = 40.0
@@ -37,13 +39,13 @@ struct SegmentedPicker<T: Equatable, Content: View>: View {
         }
     }
 
-    public var body: some View {
+    var body: some View {
         HStack(spacing: 0) {
             ForEach(self.items.indices, id: \.self) { index in
                 ZStack {
                     Rectangle()
                         .overlay(self.overlay(for: self.items[index]))
-                        .foregroundColor(.black.opacity(0.1))
+                        .foregroundStyle(.black.opacity(0.1))
                     self.content(self.items[index])
                         .contentShape(Rectangle())
                 }

@@ -1,4 +1,9 @@
 import Foundation
+import UIKit
+
+private func serialize(_ value: Any) -> Data {
+    return (try? JSONSerialization.data(withJSONObject: value))!
+}
 
 struct TwitchApiUser: Decodable {
     let id: String
@@ -41,6 +46,7 @@ struct TwitchApiChannelPointsCustomRewards: Decodable {
 
 struct TwitchApiChannelInformationData: Decodable {
     let title: String
+    let game_name: String
 }
 
 struct TwitchApiChannelInformation: Decodable {
@@ -73,9 +79,16 @@ struct TwitchApiStreams: Decodable {
     let data: [TwitchApiStreamData]
 }
 
-struct TwitchApiGameData: Decodable {
+struct TwitchApiGameData: Decodable, Identifiable {
     let id: String
     let name: String
+    let box_art_url: String?
+
+    func boxArtUrl(width: Int, height: Int) -> String? {
+        return box_art_url?
+            .replacingOccurrences(of: "{width}", with: String(width))
+            .replacingOccurrences(of: "{height}", with: String(height))
+    }
 }
 
 struct TwitchApiGames: Decodable {
@@ -141,22 +154,16 @@ struct TwitchApiGetCheermotes: Decodable {
     let data: [TwitchApiGetCheermotesData]
 }
 
-// periphery:ignore
 struct TwitchApiChatBadgesVersion: Decodable {
     let id: String
-    let image_url_1x: String
     let image_url_2x: String
-    let image_url_4x: String
-    let title: String
 }
 
 struct TwitchApiChatBadgesData: Decodable {
-    // periphery:ignore
     let set_id: String
     let versions: [TwitchApiChatBadgesVersion]
 }
 
-// periphery:ignore
 struct TwitchApiChatBadges: Decodable {
     let data: [TwitchApiChatBadgesData]
 }
@@ -165,27 +172,41 @@ protocol TwitchApiDelegate: AnyObject {
     func twitchApiUnauthorized()
 }
 
+func fetchTwitchProfilePicture(username: String) async -> UIImage? {
+    guard let url = URL(string: "https://decapi.me/twitch/avatar/\(username)") else {
+        return nil
+    }
+    let request = URLRequest(url: url, timeoutInterval: 10)
+    guard let (data, _) = try? await URLSession.shared.data(for: request),
+          let imageUrlString = String(data: data, encoding: .utf8),
+          let profileUrl = URL(string: imageUrlString.trimmingCharacters(in: .whitespacesAndNewlines))
+    else {
+        return nil
+    }
+    let imageRequest = URLRequest(url: profileUrl, timeoutInterval: 10)
+    guard let (imageData, _) = try? await URLSession.shared.data(for: imageRequest) else {
+        return nil
+    }
+    return UIImage(data: imageData)
+}
+
 class TwitchApi {
     private let clientId: String
     private let accessToken: String
-    private let urlSession: URLSession
     weak var delegate: (any TwitchApiDelegate)?
 
-    init(_ accessToken: String, _ urlSession: URLSession) {
+    init(_ accessToken: String) {
         clientId = twitchMoblinAppClientId
         self.accessToken = accessToken
-        self.urlSession = urlSession
     }
 
     func sendChatMessage(broadcasterId: String, message: String, onComplete: @escaping (Bool) -> Void) {
-        let body = """
-        {
-           "broadcaster_id": "\(broadcasterId)",
-           "sender_id": "\(broadcasterId)",
-           "message": "\(message)"
-        }
-        """
-        doPost(subPath: "chat/messages", body: body.utf8Data, onComplete: { data in
+        let body = [
+            "broadcaster_id": broadcasterId,
+            "sender_id": broadcasterId,
+            "message": message,
+        ]
+        doPost(subPath: "chat/messages", body: serialize(body), onComplete: { data in
             onComplete(data != nil)
         })
     }
@@ -247,13 +268,11 @@ class TwitchApi {
         length: Int,
         onComplete: @escaping (TwitchApiStartCommercialData?) -> Void
     ) {
-        let body = """
-        {
-           "broadcaster_id": "\(broadcasterId)",
-           "length": \(length)
-        }
-        """
-        doPost(subPath: "channels/commercial", body: body.utf8Data, onComplete: { data in
+        let body: [String: Any] = [
+            "broadcaster_id": broadcasterId,
+            "length": length,
+        ]
+        doPost(subPath: "channels/commercial", body: serialize(body), onComplete: { data in
             let message = try? JSONDecoder().decode(
                 TwitchApiStartCommercial.self,
                 from: data ?? Data()
@@ -262,16 +281,51 @@ class TwitchApi {
         })
     }
 
+    func banUser(broadcasterId: String, userId: String, duration: Int?, onComplete: @escaping (Bool) -> Void) {
+        let body: [String: Any]
+        if let duration {
+            body = [
+                "data": [
+                    "user_id": userId,
+                    "duration": duration,
+                ],
+            ]
+        } else {
+            body = [
+                "data": [
+                    "user_id": userId,
+                ],
+            ]
+        }
+        doPost(subPath: "moderation/bans?broadcaster_id=\(broadcasterId)&moderator_id=\(broadcasterId)",
+               body: serialize(body),
+               onComplete: { data in
+                   onComplete(data != nil)
+               })
+    }
+
+    func deleteChatMessage(broadcasterId: String, messageId: String, onComplete: @escaping (Bool) -> Void) {
+        doDelete(
+            subPath: """
+            moderation/chat\
+            ?broadcaster_id=\(broadcasterId)\
+            &moderator_id=\(broadcasterId)\
+            &message_id=\(messageId)
+            """,
+            onComplete: { data in
+                onComplete(data != nil)
+            }
+        )
+    }
+
     func createStreamMarker(
         userId: String,
         onComplete: @escaping (TwitchApiCreateStreamMarkerData?) -> Void
     ) {
-        let body = """
-        {
-           "user_id": "\(userId)"
-        }
-        """
-        doPost(subPath: "streams/markers", body: body.utf8Data, onComplete: { data in
+        let body = [
+            "user_id": userId,
+        ]
+        doPost(subPath: "streams/markers", body: serialize(body), onComplete: { data in
             let message = try? JSONDecoder().decode(
                 TwitchApiCreateStreamMarker.self,
                 from: data ?? Data()
@@ -280,10 +334,7 @@ class TwitchApi {
         })
     }
 
-    func getStream(
-        userId: String,
-        onComplete: @escaping (TwitchApiStreamData?) -> Void
-    ) {
+    func getStream(userId: String, onComplete: @escaping (TwitchApiStreamData?) -> Void) {
         doGet(subPath: "streams?user_id=\(userId)", onComplete: { data in
             let message = try? JSONDecoder().decode(
                 TwitchApiStreams.self,
@@ -293,17 +344,36 @@ class TwitchApi {
         })
     }
 
-    func getGames(
-        names: [String],
-        onComplete: @escaping (TwitchApiGames?) -> Void
-    ) {
-        let names = names.map { "name=\($0)" }.joined(separator: "&")
-        doGet(subPath: "games?\(names)", onComplete: { data in
+    func getGames(names: [String], onComplete: @escaping ([TwitchApiGameData]?) -> Void) {
+        var components = URLComponents()
+        components.queryItems = names.map { URLQueryItem(name: "name", value: $0) }
+        guard let query = components.percentEncodedQuery else {
+            return
+        }
+        doGet(subPath: "games?\(query)", onComplete: { data in
             let message = try? JSONDecoder().decode(
                 TwitchApiGames.self,
                 from: data ?? Data()
             )
-            onComplete(message)
+            onComplete(message?.data)
+        })
+    }
+
+    func searchCategories(query: String, onComplete: @escaping ([TwitchApiGameData]?) -> Void) {
+        var components = URLComponents()
+        components.queryItems = [
+            URLQueryItem(name: "query", value: query),
+            URLQueryItem(name: "first", value: "10"),
+        ]
+        guard let query = components.percentEncodedQuery else {
+            return
+        }
+        doGet(subPath: "search/categories?\(query)", onComplete: { data in
+            let message = try? JSONDecoder().decode(
+                TwitchApiGames.self,
+                from: data ?? Data()
+            )
+            onComplete(message?.data)
         })
     }
 
@@ -312,21 +382,16 @@ class TwitchApi {
                                   title: String?,
                                   onComplete: @escaping (Bool) -> Void)
     {
-        var items: [String] = []
+        var body: [String: String] = [:]
         if let categoryId {
-            items.append("\"game_id\": \"\(categoryId)\"")
+            body["game_id"] = categoryId
         }
         if let title {
-            items.append("\"title\": \"\(title)\"")
+            body["title"] = title
         }
-        let body = """
-        {
-            \(items.joined(separator: ","))
-        }
-        """
         doPatch(
             subPath: "channels?broadcaster_id=\(broadcasterId)",
-            body: body.utf8Data,
+            body: serialize(body),
             onComplete: { data in
                 onComplete(data != nil)
             }
@@ -394,7 +459,7 @@ class TwitchApi {
             return
         }
         let request = createGetRequest(url: url)
-        urlSession.dataTask(with: request) { data, response, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 guard error == nil, let data, response?.http?.isSuccessful == true else {
                     if response?.http?.isUnauthorized == true {
@@ -415,7 +480,7 @@ class TwitchApi {
         }
         var request = createPostRequest(url: url)
         request.httpBody = body
-        urlSession.dataTask(with: request) { data, response, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 guard error == nil, let data, response?.http?.isSuccessful == true else {
                     if response?.http?.isUnauthorized == true {
@@ -439,7 +504,27 @@ class TwitchApi {
         }
         var request = createPatchRequest(url: url)
         request.httpBody = body
-        urlSession.dataTask(with: request) { data, response, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                guard error == nil, let data, response?.http?.isSuccessful == true else {
+                    if response?.http?.isUnauthorized == true {
+                        self.delegate?.twitchApiUnauthorized()
+                    }
+                    onComplete(nil)
+                    return
+                }
+                onComplete(data)
+            }
+        }
+        .resume()
+    }
+
+    private func doDelete(subPath: String, onComplete: @escaping (Data?) -> Void) {
+        guard let url = URL(string: "https://api.twitch.tv/helix/\(subPath)") else {
+            return
+        }
+        let request = createDeleteRequest(url: url)
+        URLSession.shared.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 guard error == nil, let data, response?.http?.isSuccessful == true else {
                     if response?.http?.isUnauthorized == true {
@@ -458,7 +543,7 @@ class TwitchApi {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue(clientId, forHTTPHeaderField: "client-id")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "authorization")
+        request.setAuthorization("Bearer \(accessToken)")
         return request
     }
 
@@ -466,8 +551,8 @@ class TwitchApi {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue(clientId, forHTTPHeaderField: "client-id")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "authorization")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setAuthorization("Bearer \(accessToken)")
+        request.setContentType("application/json")
         return request
     }
 
@@ -475,8 +560,16 @@ class TwitchApi {
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue(clientId, forHTTPHeaderField: "client-id")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "authorization")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setAuthorization("Bearer \(accessToken)")
+        request.setContentType("application/json")
+        return request
+    }
+
+    private func createDeleteRequest(url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue(clientId, forHTTPHeaderField: "client-id")
+        request.setAuthorization("Bearer \(accessToken)")
         return request
     }
 }

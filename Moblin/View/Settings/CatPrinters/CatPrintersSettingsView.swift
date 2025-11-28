@@ -12,11 +12,13 @@ struct IntegrationImageView: View {
 }
 
 private struct CatPrinterSettingsWrapperView: View {
+    @ObservedObject var catPrinters: SettingsCatPrinters
     @ObservedObject var device: SettingsCatPrinter
+    let status: StatusTopRight
 
     var body: some View {
         NavigationLink {
-            CatPrinterSettingsView(device: device)
+            CatPrinterSettingsView(catPrinters: catPrinters, device: device, status: status)
         } label: {
             Text(device.name)
         }
@@ -45,15 +47,17 @@ struct CatPrintersSettingsView: View {
             Section {
                 List {
                     ForEach(catPrinters.devices) { device in
-                        CatPrinterSettingsWrapperView(device: device)
+                        CatPrinterSettingsWrapperView(catPrinters: catPrinters,
+                                                      device: device,
+                                                      status: model.statusTopRight)
                     }
-                    .onDelete(perform: { offsets in
+                    .onDelete { offsets in
                         catPrinters.devices.remove(atOffsets: offsets)
-                    })
+                    }
                 }
                 CreateButtonView {
                     let device = SettingsCatPrinter()
-                    device.name = "My printer"
+                    device.name = makeUniqueName(name: SettingsCatPrinter.baseName, existingNames: catPrinters.devices)
                     catPrinters.devices.append(device)
                 }
             } footer: {

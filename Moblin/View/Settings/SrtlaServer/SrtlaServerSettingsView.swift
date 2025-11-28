@@ -2,121 +2,129 @@ import SwiftUI
 
 struct SrtlaServerSettingsView: View {
     @EnvironmentObject var model: Model
-    @ObservedObject var database: Database
+    @ObservedObject var srtlaServer: SettingsSrtlaServer
 
     private func submitSrtPort(value: String) {
-        guard let port = UInt16(value.trim()) else {
+        guard let port = UInt16(value) else {
             return
         }
-        database.srtlaServer.srtPort = port
+        srtlaServer.srtPort = port
         model.reloadSrtlaServer()
     }
 
     private func submitSrtlaPort(value: String) {
-        guard let port = UInt16(value.trim()) else {
+        guard let port = UInt16(value) else {
             return
         }
-        database.srtlaServer.srtlaPort = port
+        srtlaServer.srtlaPort = port
         model.reloadSrtlaServer()
     }
 
+    private func status() -> String {
+        if srtlaServer.enabled {
+            return String(srtlaServer.streams.count)
+        } else {
+            return "0"
+        }
+    }
+
     var body: some View {
-        Form {
-            Section {
-                Toggle("Enabled", isOn: Binding(get: {
-                    database.srtlaServer.enabled
-                }, set: { value in
-                    database.srtlaServer.enabled = value
-                    model.reloadSrtlaServer()
-                    model.objectWillChange.send()
-                }))
-            }
-            if model.srtlaServerEnabled() {
+        NavigationLink {
+            Form {
                 Section {
-                    HStack {
-                        Image(systemName: "info.circle.fill")
-                            .foregroundColor(.blue)
-                        Text("Disable the SRT(LA) server to change its settings.")
+                    Toggle("Enabled", isOn: $srtlaServer.enabled)
+                        .onChange(of: srtlaServer.enabled) { _ in
+                            model.reloadSrtlaServer()
+                        }
+                }
+                if srtlaServer.enabled {
+                    Section {
+                        HStack {
+                            Image(systemName: "info.circle.fill")
+                                .foregroundStyle(.blue)
+                            Text("Disable the SRT(LA) server to change its settings.")
+                        }
                     }
                 }
-            }
-            Section {
-                TextEditNavigationView(
-                    title: String(localized: "SRT port"),
-                    value: String(database.srtlaServer.srtPort),
-                    onSubmit: submitSrtPort,
-                    keyboardType: .numbersAndPunctuation
-                )
-                .disabled(model.srtlaServerEnabled())
-            } footer: {
-                Text("The UDP port the SRT(LA) server listens for SRT publishers on.")
-            }
-            Section {
-                TextEditNavigationView(
-                    title: String(localized: "SRTLA port"),
-                    value: String(database.srtlaServer.srtlaPort),
-                    onSubmit: submitSrtlaPort,
-                    keyboardType: .numbersAndPunctuation
-                )
-                .disabled(model.srtlaServerEnabled())
-            } footer: {
-                VStack(alignment: .leading) {
-                    Text("The UDP port the SRT(LA) server listens for SRTLA publishers on.")
-                    Text("")
-                    Text("The UDP port \(database.srtlaServer.srtlaSrtPort()) will also be used.")
+                Section {
+                    TextEditNavigationView(
+                        title: String(localized: "SRT port"),
+                        value: String(srtlaServer.srtPort),
+                        onChange: isValidPort,
+                        onSubmit: submitSrtPort,
+                        keyboardType: .numbersAndPunctuation
+                    )
+                    .disabled(srtlaServer.enabled)
+                } footer: {
+                    Text("The UDP port the SRT(LA) server listens for SRT publishers on.")
                 }
-            }
-            Section {
-                List {
-                    let list = ForEach(database.srtlaServer.streams) { stream in
-                        NavigationLink {
+                Section {
+                    TextEditNavigationView(
+                        title: String(localized: "SRTLA port"),
+                        value: String(srtlaServer.srtlaPort),
+                        onChange: isValidPort,
+                        onSubmit: submitSrtlaPort,
+                        keyboardType: .numbersAndPunctuation
+                    )
+                    .disabled(srtlaServer.enabled)
+                } footer: {
+                    VStack(alignment: .leading) {
+                        Text("The UDP port the SRT(LA) server listens for SRTLA publishers on.")
+                        Text("")
+                        Text("The UDP port \(srtlaServer.srtlaSrtPort()) will also be used.")
+                    }
+                }
+                Section {
+                    List {
+                        let list = ForEach(srtlaServer.streams) { stream in
                             SrtlaServerStreamSettingsView(
-                                srtlaPort: database.srtlaServer.srtlaPort,
+                                status: model.statusOther,
+                                srtlaServer: srtlaServer,
                                 stream: stream
                             )
-                        } label: {
-                            HStack {
-                                if model.isSrtlaStreamConnected(streamId: stream.streamId) {
-                                    Image(systemName: "cable.connector")
-                                } else {
-                                    Image(systemName: "cable.connector.slash")
-                                }
-                                Text(stream.name)
-                                Spacer()
+                        }
+                        if !model.srtlaServerEnabled() {
+                            list.onDelete { indexes in
+                                srtlaServer.streams.remove(atOffsets: indexes)
+                                model.reloadSrtlaServer()
+                                model.updateMicsListAsync()
+                            }
+                        } else {
+                            list
+                        }
+                    }
+                    CreateButtonView {
+                        let stream = SettingsSrtlaServerStream()
+                        stream.name = makeUniqueName(name: SettingsSrtlaServerStream.baseName,
+                                                     existingNames: srtlaServer.streams)
+                        while true {
+                            stream.streamId = randomHumanString()
+                            if model.getSrtlaStream(streamId: stream.streamId) == nil {
+                                break
                             }
                         }
+                        srtlaServer.streams.append(stream)
+                        model.updateMicsListAsync()
                     }
-                    if !model.srtlaServerEnabled() {
-                        list.onDelete(perform: { indexes in
-                            database.srtlaServer.streams.remove(atOffsets: indexes)
-                            model.reloadSrtlaServer()
-                        })
-                    } else {
-                        list
+                    .disabled(srtlaServer.enabled)
+                } header: {
+                    Text("Streams")
+                } footer: {
+                    VStack(alignment: .leading) {
+                        Text("Each stream can receive video from one SRT(LA) publisher.")
+                        Text("")
+                        SwipeLeftToDeleteHelpView(kind: String(localized: "a stream"))
                     }
-                }
-                CreateButtonView {
-                    let stream = SettingsSrtlaServerStream()
-                    while true {
-                        stream.streamId = randomHumanString()
-                        if model.getSrtlaStream(streamId: stream.streamId) == nil {
-                            break
-                        }
-                    }
-                    database.srtlaServer.streams.append(stream)
-                    model.objectWillChange.send()
-                }
-                .disabled(model.srtlaServerEnabled())
-            } header: {
-                Text("Streams")
-            } footer: {
-                VStack(alignment: .leading) {
-                    Text("Each stream can receive video from one SRT(LA) publisher.")
-                    Text("")
-                    SwipeLeftToDeleteHelpView(kind: String(localized: "a stream"))
                 }
             }
+            .navigationTitle("SRT(LA) server")
+        } label: {
+            HStack {
+                Text("SRT(LA) server")
+                Spacer()
+                Text(status())
+                    .foregroundStyle(.gray)
+            }
         }
-        .navigationTitle("SRT(LA) server")
     }
 }

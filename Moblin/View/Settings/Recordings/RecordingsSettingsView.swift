@@ -1,82 +1,57 @@
 import SwiftUI
 
-private struct RecordingsSettingsSummaryView: View {
-    @EnvironmentObject var model: Model
+private struct RecordingsLocationView: View {
+    let model: Model
+    let text: Text
+    let path: URL
 
-    var recordingsStorage: RecordingsStorage {
-        model.recordingsStorage
-    }
-
-    var body: some View {
-        HStack {
-            Spacer()
-            VStack {
-                Text(recordingsStorage.numberOfRecordingsString())
-                    .font(.title2)
-                Text("Total recordings")
-                    .font(.subheadline)
-            }
-            Spacer()
-            VStack {
-                Text(recordingsStorage.totalSizeString())
-                    .font(.title2)
-                Text("Total size")
-                    .font(.subheadline)
-            }
-            Spacer()
+    private func makeSharedUrl(path: URL) -> URL? {
+        guard let sharedUrl = URL(string: "shareddocuments://\(path.path())") else {
+            return nil
+        }
+        if UIApplication.shared.canOpenURL(sharedUrl) {
+            return sharedUrl
+        } else {
+            return nil
         }
     }
-}
 
-private struct RecordingsSettingsRecordingsView: View {
-    @EnvironmentObject var model: Model
-    @State var isPresentingBrowse = false
+    private func openInFilesApp(sharedUrl: URL) {
+        UIApplication.shared.open(sharedUrl)
+    }
 
-    var recordingsStorage: RecordingsStorage {
-        model.recordingsStorage
+    private func copyPathToClipboard(path: URL) {
+        UIPasteboard.general.string = path.path()
+        let subTitle: String?
+        if isMac() {
+            subTitle = String(localized: "Open it in Finder app → Go → Go to Folder...")
+        } else {
+            subTitle = nil
+        }
+        model.makeToast(title: String(localized: "Directory copied to clipboard"), subTitle: subTitle)
     }
 
     var body: some View {
-        Form {
-            Section {
-                List {
-                    ForEach(recordingsStorage.database.recordings) { recording in
-                        NavigationLink {
-                            RecordingsRecordingSettingsView(
-                                recording: recording,
-                                description: recording.description ?? ""
-                            )
-                        } label: {
-                            HStack {
-                                if let image = createThumbnail(path: recording.url()) {
-                                    Image(uiImage: image)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(width: 90)
-                                } else {
-                                    Image(systemName: "photo")
-                                }
-                                VStack(alignment: .leading) {
-                                    Text(recording.startTime.formatted())
-                                    Text(recording.length().formatWithSeconds())
-                                    Text(recording.subTitle())
-                                        .font(.footnote)
-                                }
-                            }
-                        }
+        Section {
+            HStack {
+                text
+                Spacer()
+                if let sharedUrl = makeSharedUrl(path: path) {
+                    Button {
+                        openInFilesApp(sharedUrl: sharedUrl)
+                    } label: {
+                        Image(systemName: "arrow.turn.up.right")
                     }
-                    .onDelete(perform: { indexSet in
-                        for index in indexSet {
-                            recordingsStorage.database.recordings[index].url().remove()
-                        }
-                        recordingsStorage.database.recordings.remove(atOffsets: indexSet)
-                        recordingsStorage.store()
-                        model.objectWillChange.send()
-                    })
-                }
-            } footer: {
-                if !recordingsStorage.database.recordings.isEmpty {
-                    SwipeLeftToDeleteHelpView(kind: "a recording")
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.blue)
+                } else {
+                    Button {
+                        copyPathToClipboard(path: path)
+                    } label: {
+                        Image(systemName: "document.on.document")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.blue)
                 }
             }
         }
@@ -84,10 +59,25 @@ private struct RecordingsSettingsRecordingsView: View {
 }
 
 struct RecordingsSettingsView: View {
+    let model: Model
+
     var body: some View {
-        VStack {
-            RecordingsSettingsSummaryView()
-            RecordingsSettingsRecordingsView()
+        Form {
+            RecordingsLocationView(model: model,
+                                   text: Text("Default recordings directory"),
+                                   path: model.recordingsStorage.defaultStorageDirectory())
+            if let path = model.stream.recording.recordingPath {
+                if let path = makeRecordingPath(recordingPath: path) {
+                    RecordingsLocationView(model: model,
+                                           text: Text("Current recordings directory"),
+                                           path: path)
+                } else {
+                    Text("Current recordings directory unavailable")
+                }
+            }
+            RecordingsLocationView(model: model,
+                                   text: Text("Replays directory"),
+                                   path: model.replaysStorage.defaultStorageDirectory())
         }
         .navigationTitle("Recordings")
     }

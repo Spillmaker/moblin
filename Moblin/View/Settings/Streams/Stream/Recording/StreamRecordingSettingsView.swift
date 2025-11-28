@@ -1,18 +1,126 @@
 import SwiftUI
 
+private struct PickerView: UIViewControllerRepresentable {
+    @EnvironmentObject var model: Model
+
+    func makeUIViewController(context _: Context) -> UIDocumentPickerViewController {
+        let documentPicker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder])
+        documentPicker.delegate = model
+        return documentPicker
+    }
+
+    func updateUIViewController(_: UIDocumentPickerViewController, context _: Context) {}
+}
+
+private struct RecordingPathView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var stream: SettingsStream
+    @ObservedObject var recording: SettingsStreamRecording
+    @State var showPicker = false
+
+    private func onUrl(url: URL) {
+        guard url.startAccessingSecurityScopedResource() else {
+            return
+        }
+        do {
+            recording.recordingPath = try url.bookmarkData()
+        } catch {
+            logger.info("Failed to create bookmark with error: \(error)")
+        }
+        url.stopAccessingSecurityScopedResource()
+    }
+
+    private func getRecordingPath(recordingPath: Data) -> String {
+        return makeRecordingPath(recordingPath: recordingPath)?.path() ?? String(localized: "Disk not connected?")
+    }
+
+    var body: some View {
+        NavigationLink {
+            Form {
+                Section {
+                    Button {
+                        showPicker = true
+                        model.onDocumentPickerUrl = onUrl
+                    } label: {
+                        HCenter {
+                            if let recordingPath = recording.recordingPath {
+                                Text(getRecordingPath(recordingPath: recordingPath))
+                                    .lineLimit(1)
+                                    .truncationMode(.head)
+                            } else {
+                                Text("Select")
+                            }
+                        }
+                    }
+                    .sheet(isPresented: $showPicker) {
+                        PickerView()
+                    }
+                } header: {
+                    Text("Folder")
+                }
+                Section {
+                    TextButtonView("Reset") {
+                        recording.recordingPath = nil
+                    }
+                    .tint(.red)
+                }
+            }
+            .navigationTitle("Recording path")
+        } label: {
+            HStack {
+                Text("Recording path")
+                Spacer()
+                if let recordingPath = recording.recordingPath {
+                    Text(getRecordingPath(recordingPath: recordingPath))
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                        .foregroundStyle(.gray)
+                }
+            }
+        }
+    }
+}
+
+private struct ResolutionSettingsView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var stream: SettingsStream
+    @ObservedObject var recording: SettingsStreamRecording
+
+    var body: some View {
+        Picker("Resolution", selection: $recording.resolution) {
+            ForEach(resolutions, id: \.self) {
+                Text($0.shortString())
+            }
+        }
+        .disabled(!recording.overrideStream)
+        .onChange(of: recording.resolution) { _ in
+            model.reloadStreamIfEnabled(stream: stream)
+        }
+    }
+}
+
+private struct FpsSettingsView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var stream: SettingsStream
+    @ObservedObject var recording: SettingsStreamRecording
+
+    var body: some View {
+        Picker("FPS", selection: $recording.fps) {
+            ForEach(fpss, id: \.self) {
+                Text(String($0))
+            }
+        }
+        .disabled(!recording.overrideStream)
+        .onChange(of: recording.fps) { _ in
+            model.reloadStreamIfEnabled(stream: stream)
+        }
+    }
+}
+
 struct StreamRecordingSettingsView: View {
     @EnvironmentObject var model: Model
-    var stream: SettingsStream
-    @State var videoCodec: String
-
-    private var recording: SettingsStreamRecording {
-        return stream.recording
-    }
-
-    private func onVideoCodecChange(codec: String) {
-        videoCodec = codec
-        recording.videoCodec = SettingsStreamCodec(rawValue: codec)!
-    }
+    @ObservedObject var stream: SettingsStream
+    @ObservedObject var recording: SettingsStreamRecording
 
     private func submitVideoBitrateChange(value: String) {
         guard var bitrate = Float(value) else {
@@ -27,7 +135,7 @@ struct StreamRecordingSettingsView: View {
         guard let interval = Int32(value) else {
             return
         }
-        guard interval >= 0 && interval <= 10 else {
+        guard interval >= 0, interval <= 10 else {
             return
         }
         recording.maxKeyFrameInterval = interval
@@ -36,15 +144,22 @@ struct StreamRecordingSettingsView: View {
     var body: some View {
         Form {
             Section {
-                HStack {
-                    Text("Video codec")
-                    Spacer()
-                    Picker("", selection: Binding(get: {
-                        videoCodec
-                    }, set: onVideoCodecChange)) {
-                        ForEach(codecs, id: \.self) {
-                            Text($0)
-                        }
+                Toggle("Override", isOn: $recording.overrideStream)
+                    .onChange(of: recording.overrideStream) { _ in
+                        model.reloadStreamIfEnabled(stream: stream)
+                    }
+                    .disabled(stream.enabled && (model.isLive || model.isRecording))
+                ResolutionSettingsView(stream: stream, recording: recording)
+                if false {
+                    FpsSettingsView(stream: stream, recording: recording)
+                }
+            } footer: {
+                Text("Resolution and FPS are same as for live stream if not overridden.")
+            }
+            Section {
+                Picker("Video codec", selection: $recording.videoCodec) {
+                    ForEach(SettingsStreamCodec.allCases, id: \.self) {
+                        Text($0.rawValue)
                     }
                 }
                 .disabled(stream.enabled && model.isRecording)
@@ -60,7 +175,7 @@ struct StreamRecordingSettingsView: View {
                 } label: {
                     TextItemView(
                         name: String(localized: "Video bitrate"),
-                        value: formatBytesPerSecond(speed: Int64(recording.videoBitrate))
+                        value: recording.videoBitrateString()
                     )
                 }
                 .disabled(stream.enabled && model.isRecording)
@@ -69,9 +184,7 @@ struct StreamRecordingSettingsView: View {
                         title: String(localized: "Key frame interval"),
                         value: String(recording.maxKeyFrameInterval),
                         footers: [
-                            String(
-                                localized: "Maximum key frame interval in seconds. Set to 0 for automatic."
-                            ),
+                            String(localized: "Maximum key frame interval in seconds. Set to 0 for automatic."),
                         ],
                         keyboardType: .numbersAndPunctuation
                     ) {
@@ -80,46 +193,35 @@ struct StreamRecordingSettingsView: View {
                 } label: {
                     TextItemView(
                         name: String(localized: "Key frame interval"),
-                        value: "\(recording.maxKeyFrameInterval) s"
+                        value: recording.maxKeyFrameIntervalString()
                     )
                 }
                 .disabled(stream.enabled && model.isRecording)
                 NavigationLink {
                     StreamRecordingAudioSettingsView(
                         stream: stream,
-                        bitrate: Float(recording.audioBitrate! / 1000)
+                        bitrate: Float(recording.audioBitrate / 1000)
                     )
                 } label: {
                     TextItemView(
                         name: String(localized: "Audio bitrate"),
-                        value: formatBytesPerSecond(speed: Int64(recording.audioBitrate!))
+                        value: recording.audioBitrateString()
                     )
                 }
                 .disabled(stream.enabled && model.isRecording)
-            } footer: {
-                Text("Resolution and FPS are same as for live stream.")
             }
+            RecordingPathView(stream: stream, recording: recording)
             Section {
-                Toggle("Clean recordings", isOn: Binding(get: {
-                    recording.cleanRecordings!
-                }, set: { value in
-                    recording.cleanRecordings = value
-                    model.setCleanRecordings()
-                }))
+                Toggle("Clean recordings", isOn: $recording.cleanRecordings)
+                    .onChange(of: recording.cleanRecordings) { _ in
+                        model.setCleanRecordings()
+                    }
             } footer: {
                 Text("Do not show widgets in recordings.")
             }
             Section {
-                Toggle("Auto start recording when going live", isOn: Binding(get: {
-                    recording.autoStartRecording!
-                }, set: { value in
-                    recording.autoStartRecording = value
-                }))
-                Toggle("Auto stop recording when ending stream", isOn: Binding(get: {
-                    recording.autoStopRecording!
-                }, set: { value in
-                    recording.autoStopRecording = value
-                }))
+                Toggle("Auto start recording when going live", isOn: $recording.autoStartRecording)
+                Toggle("Auto stop recording when ending stream", isOn: $recording.autoStopRecording)
             }
         }
         .navigationTitle("Recording")

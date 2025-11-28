@@ -1,6 +1,6 @@
 import Foundation
 
-class MpegTsAdaptationField {
+struct MpegTsAdaptationField {
     static let fixedSectionSize: UInt8 = 2
     var randomAccessIndicator = false
     var programClockReference: Data?
@@ -33,7 +33,7 @@ class MpegTsAdaptationField {
         return length
     }
 
-    func setStuffing(_ size: Int) {
+    mutating func setStuffing(_ size: Int) {
         stuffingBytes = Data(repeating: 0xFF, count: size)
     }
 
@@ -45,15 +45,15 @@ class MpegTsAdaptationField {
         if programClockReference != nil {
             flags |= 0x10
         }
-        let encoded = ByteWriter()
-            .writeUInt8(calcLength() - 1)
-            .writeUInt8(flags)
+        let writer = ByteWriter()
+        writer.writeUInt8(calcLength() - 1)
+        writer.writeUInt8(flags)
         if let programClockReference {
-            encoded.writeBytes(programClockReference)
+            writer.writeBytes(programClockReference)
         }
         if let stuffingBytes {
-            encoded.writeBytes(stuffingBytes)
+            writer.writeBytes(stuffingBytes)
         }
-        return encoded.data
+        return writer.data
     }
 }

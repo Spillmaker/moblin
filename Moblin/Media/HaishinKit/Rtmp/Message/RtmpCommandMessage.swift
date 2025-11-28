@@ -6,14 +6,14 @@ final class RtmpCommandMessage: RtmpMessage {
     var commandObject: AsObject?
     var arguments: [Any?] = []
 
-    init(objectEncoding: RtmpObjectEncoding) {
-        super.init(type: objectEncoding.commandType)
+    init(commandType: RtmpMessageType) {
+        super.init(type: commandType)
     }
 
     init(
         streamId: UInt32,
         transactionId: Int,
-        objectEncoding: RtmpObjectEncoding,
+        commandType: RtmpMessageType,
         commandName: String,
         commandObject: AsObject?,
         arguments: [Any?]
@@ -22,7 +22,7 @@ final class RtmpCommandMessage: RtmpMessage {
         self.commandName = commandName
         self.commandObject = commandObject
         self.arguments = arguments
-        super.init(type: objectEncoding.commandType)
+        super.init(type: commandType)
         self.streamId = streamId
     }
 
@@ -30,9 +30,11 @@ final class RtmpCommandMessage: RtmpMessage {
         guard let responder = connection.callCompletions.removeValue(forKey: transactionId) else {
             switch commandName {
             case "close":
-                connection.disconnectInternal()
+                connection.disconnect()
             default:
-                connection.dispatch(.rtmpStatus, data: arguments.first as Any?)
+                if let data = arguments.first as? AsObject?, let data {
+                    connection.gotCommand(data: data)
+                }
             }
             return
         }
@@ -56,10 +58,9 @@ final class RtmpCommandMessage: RtmpMessage {
             if type == .amf3Command {
                 serializer.writeUInt8(0)
             }
-            serializer
-                .serialize(commandName)
-                .serialize(transactionId)
-                .serialize(commandObject)
+            serializer.serialize(commandName)
+            serializer.serialize(transactionId)
+            serializer.serialize(commandObject)
             for argument in arguments {
                 serializer.serialize(argument)
             }

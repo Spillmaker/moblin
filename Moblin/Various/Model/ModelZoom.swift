@@ -4,20 +4,36 @@ import Foundation
 private let noBackZoomPresetId = UUID()
 private let noFrontZoomPresetId = UUID()
 
+class Zoom: ObservableObject {
+    var xPinch: Float = 1.0
+    var backX: Float = 0.5
+    var frontX: Float = 0.5
+    @Published var backPresetId = UUID()
+    @Published var frontPresetId = UUID()
+    @Published var x: Float = 1.0
+    @Published var hasZoom = true
+    @Published var backZoomPresets: [SettingsZoomPreset] = []
+    @Published var frontZoomPresets: [SettingsZoomPreset] = []
+
+    func statusText() -> String {
+        return String(format: "%.1f", x)
+    }
+}
+
 extension Model {
     func setZoomPreset(id: UUID) {
-        switch cameraPosition {
-        case .back:
-            backZoomPresetId = id
-        case .front:
-            frontZoomPresetId = id
-        default:
-            break
-        }
         if let preset = findZoomPreset(id: id) {
-            if setCameraZoomX(x: preset.x!, rate: database.zoom.speed!) != nil {
-                setZoomXWhenInRange(x: preset.x!)
-                switch getSelectedScene()?.cameraPosition {
+            switch cameraPosition {
+            case .back:
+                setBackZoomPreset(presetId: id)
+            case .front:
+                setFrontZoomPreset(presetId: id)
+            default:
+                break
+            }
+            if setCameraZoomX(x: preset.x, rate: database.zoom.speed) != nil {
+                setZoomXWhenInRange(x: preset.x)
+                switch getSelectedScene()?.videoSource.cameraPosition {
                 case .backTripleLowEnergy:
                     attachBackTripleLowEnergyCamera(force: false)
                 case .backDualLowEnergy:
@@ -27,9 +43,6 @@ extension Model {
                 default:
                     break
                 }
-            }
-            if isWatchLocal() {
-                sendZoomPresetToWatch()
             }
         } else {
             clearZoomPresetId()
@@ -46,83 +59,115 @@ extension Model {
     func setZoomXWhenInRange(x: Float, setPinch: Bool = true) {
         switch cameraPosition {
         case .back:
-            backZoomX = x
+            zoom.backX = x
             updateBackZoomPresetId()
         case .front:
-            frontZoomX = x
+            zoom.frontX = x
             updateFrontZoomPresetId()
         default:
             break
         }
-        zoomX = x
+        zoom.x = x
         remoteControlStreamer?.stateChanged(state: RemoteControlState(zoom: x))
         if isWatchLocal() {
             sendZoomToWatch(x: x)
         }
         if setPinch {
-            zoomXPinch = zoomX
+            zoom.xPinch = zoom.x
         }
     }
 
     func changeZoomX(amount: Float, rate: Float? = nil) {
-        guard hasZoom else {
+        guard zoom.hasZoom else {
             return
         }
-        setZoomX(x: zoomXPinch * amount, rate: rate, setPinch: false)
+        setZoomX(x: zoom.xPinch * amount, rate: rate, setPinch: false)
     }
 
     func commitZoomX(amount: Float, rate: Float? = nil) {
-        guard hasZoom else {
+        guard zoom.hasZoom else {
             return
         }
-        setZoomX(x: zoomXPinch * amount, rate: rate)
+        setZoomX(x: zoom.xPinch * amount, rate: rate)
     }
 
     private func clearZoomPresetId() {
         switch cameraPosition {
         case .back:
-            backZoomPresetId = noBackZoomPresetId
+            setBackZoomPreset(presetId: noBackZoomPresetId)
         case .front:
-            frontZoomPresetId = noFrontZoomPresetId
+            setFrontZoomPreset(presetId: noFrontZoomPresetId)
         default:
             break
         }
-        if isWatchLocal() {
-            sendZoomPresetToWatch()
+    }
+
+    private func setBackZoomPreset(presetId: UUID) {
+        zoom.backPresetId = presetId
+        if cameraPosition == .back {
+            remoteControlStreamer?.stateChanged(state: RemoteControlState(zoomPreset: presetId))
+            if isWatchLocal() {
+                sendZoomPresetToWatch()
+            }
+        }
+    }
+
+    private func setFrontZoomPreset(presetId: UUID) {
+        zoom.frontPresetId = presetId
+        if cameraPosition == .front {
+            remoteControlStreamer?.stateChanged(state: RemoteControlState(zoomPreset: presetId))
+            if isWatchLocal() {
+                sendZoomPresetToWatch()
+            }
         }
     }
 
     private func findZoomPreset(id: UUID) -> SettingsZoomPreset? {
         switch cameraPosition {
         case .back:
-            return database.zoom.back.first { preset in
-                preset.id == id
-            }
+            return database.zoom.back.first { $0.id == id }
         case .front:
-            return database.zoom.front.first { preset in
-                preset.id == id
-            }
+            return database.zoom.front.first { $0.id == id }
         default:
             return nil
         }
     }
 
-    func backZoomUpdated() {
-        if !database.zoom.back.contains(where: { level in
-            level.id == backZoomPresetId
-        }) {
-            backZoomPresetId = database.zoom.back[0].id
+    func backZoomPresetSettingsUpdated() {
+        if !database.zoom.back.contains(where: { $0.id == zoom.backPresetId }) {
+            setBackZoomPreset(presetId: noBackZoomPresetId)
         }
-        sceneUpdated(updateRemoteScene: false)
+        updateBackZoomPresets()
     }
 
-    func frontZoomUpdated() {
-        if !database.zoom.front.contains(where: { level in
-            level.id == frontZoomPresetId
-        }) {
-            frontZoomPresetId = database.zoom.front[0].id
+    func frontZoomPresetSettingUpdated() {
+        if !database.zoom.front.contains(where: { $0.id == zoom.frontPresetId }) {
+            setFrontZoomPreset(presetId: noFrontZoomPresetId)
         }
-        sceneUpdated(updateRemoteScene: false)
+        updateFrontZoomPresets()
+    }
+
+    func updateFrontZoomPresets() {
+        zoom.frontZoomPresets = database.zoom.front.filter { showPreset(preset: $0) }
+        if cameraPosition == .front {
+            let presets = zoom.frontZoomPresets.map { RemoteControlZoomPreset(id: $0.id, name: $0.name) }
+            remoteControlStreamer?
+                .stateChanged(state: RemoteControlState(zoomPresets: presets))
+            if isWatchLocal() {
+                sendZoomPresetsToWatch()
+            }
+        }
+    }
+
+    func updateBackZoomPresets() {
+        zoom.backZoomPresets = database.zoom.back.filter { showPreset(preset: $0) }
+        if cameraPosition == .back {
+            let presets = zoom.backZoomPresets.map { RemoteControlZoomPreset(id: $0.id, name: $0.name) }
+            remoteControlStreamer?.stateChanged(state: RemoteControlState(zoomPresets: presets))
+            if isWatchLocal() {
+                sendZoomPresetsToWatch()
+            }
+        }
     }
 
     func lowEnergyCameraUpdateBackZoom(force: Bool) {
@@ -132,21 +177,21 @@ extension Model {
     }
 
     private func updateBackZoomPresetId() {
-        for preset in database.zoom.back where preset.x == backZoomX {
-            backZoomPresetId = preset.id
+        if let preset = database.zoom.back.first(where: { $0.x == zoom.backX }) {
+            setBackZoomPreset(presetId: preset.id)
         }
     }
 
     private func updateFrontZoomPresetId() {
-        for preset in database.zoom.front where preset.x == frontZoomX {
-            frontZoomPresetId = preset.id
+        if let preset = database.zoom.front.first(where: { $0.x == zoom.frontX }) {
+            setFrontZoomPreset(presetId: preset.id)
         }
     }
 
     func updateBackZoomSwitchTo() {
         if database.zoom.switchToBack.enabled {
             clearZoomPresetId()
-            backZoomX = database.zoom.switchToBack.x!
+            zoom.backX = database.zoom.switchToBack.x
             updateBackZoomPresetId()
         }
     }
@@ -154,13 +199,15 @@ extension Model {
     func updateFrontZoomSwitchTo() {
         if database.zoom.switchToFront.enabled {
             clearZoomPresetId()
-            frontZoomX = database.zoom.switchToFront.x!
+            zoom.frontX = database.zoom.switchToFront.x
             updateFrontZoomPresetId()
         }
     }
 
     private func factorToX(position: AVCaptureDevice.Position, factor: Float) -> Float {
-        if position == .back && hasUltraWideBackCamera() {
+        if position == .back && hasUltraWideBackCamera {
+            return factor / 2
+        } else if position == .front && hasUltraWideFrontCamera {
             return factor / 2
         }
         return factor
@@ -186,24 +233,12 @@ extension Model {
     }
 
     func isShowingStatusZoom() -> Bool {
-        return database.show.zoom && hasZoom
-    }
-
-    func statusZoomText() -> String {
-        return String(format: "%.1f", zoomX)
+        return database.show.zoom && zoom.hasZoom
     }
 
     private func showPreset(preset: SettingsZoomPreset) -> Bool {
-        let x = preset.x!
+        let x = preset.x
         return x >= cameraZoomXMinimum && x <= cameraZoomXMaximum
-    }
-
-    func backZoomPresets() -> [SettingsZoomPreset] {
-        return database.zoom.back.filter { showPreset(preset: $0) }
-    }
-
-    func frontZoomPresets() -> [SettingsZoomPreset] {
-        return database.zoom.front.filter { showPreset(preset: $0) }
     }
 
     func setCameraZoomX(x: Float, rate: Float? = nil) -> Float? {

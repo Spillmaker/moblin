@@ -4,23 +4,16 @@ private let startRadiusFraction = 0.45
 private let endRadiusFraction = 0.5
 
 struct ChatInfo: View {
-    var message: String
-    var icon: String?
-    var iconColor: Color = .white
+    let message: String
 
     var body: some View {
         VStack {
             Spacer()
             HStack {
                 HStack {
-                    if let icon {
-                        Image(systemName: icon)
-                            .foregroundColor(iconColor)
-                            .bold()
-                    }
                     Text(message)
                         .bold()
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                 }
                 .padding([.top, .bottom], 5)
                 .padding([.leading, .trailing], 10)
@@ -46,46 +39,79 @@ private struct ChatPausedView: View {
     }
 }
 
-private struct ChatOverlayView: View {
+struct ChatOverlayView: View {
     @EnvironmentObject var model: Model
-    let height: CGFloat
+    @ObservedObject var chatSettings: SettingsChat
+    @ObservedObject var chat: ChatProvider
+    @ObservedObject var orientation: Orientation
+    @ObservedObject var quickButtons: SettingsQuickButtons
+    let fullSize: Bool
 
     var body: some View {
-        if model.isPortrait() {
+        if orientation.isPortrait {
             VStack {
                 ZStack {
-                    StreamOverlayChatView(chat: model.chat)
-                    ChatPausedView(chat: model.chat)
+                    StreamOverlayChatView(model: model, chatSettings: chatSettings, chat: chat, fullSize: fullSize)
+                    ChatPausedView(chat: chat)
                 }
-                Rectangle()
-                    .foregroundColor(.clear)
-                    .frame(height: 85)
+                if !fullSize {
+                    Rectangle()
+                        .foregroundStyle(.clear)
+                        .frame(height: 85)
+                } else {
+                    Divider()
+                        .background(.gray)
+                    Rectangle()
+                        .foregroundStyle(.clear)
+                        .frame(height: controlBarWidthDefault)
+                }
             }
+            .allowsHitTesting(chat.interactiveChat)
         } else {
-            VStack {
-                ZStack {
-                    GeometryReader { metrics in
-                        StreamOverlayChatView(chat: model.chat)
-                            .frame(width: metrics.size.width * 0.95)
+            HStack(spacing: 0) {
+                VStack {
+                    ZStack {
+                        HStack(spacing: 0) {
+                            GeometryReader { metrics in
+                                StreamOverlayChatView(
+                                    model: model,
+                                    chatSettings: chatSettings,
+                                    chat: chat,
+                                    fullSize: fullSize
+                                )
+                                .frame(width: metrics.size.width * 0.95)
+                            }
+                        }
+                        ChatPausedView(chat: chat)
                     }
-                    ChatPausedView(chat: model.chat)
+                    if !fullSize {
+                        Rectangle()
+                            .foregroundStyle(.clear)
+                            .frame(height: chatSettings.bottomPoints)
+                    }
                 }
-                Rectangle()
-                    .foregroundColor(.clear)
-                    .frame(height: model.database.chat.bottomPoints)
+                if fullSize {
+                    Divider()
+                        .background(.gray)
+                    Rectangle()
+                        .foregroundStyle(.clear)
+                        .frame(width: controlBarWidth(quickButtons: quickButtons))
+                }
             }
+            .allowsHitTesting(chat.interactiveChat)
         }
     }
 }
 
 private struct FrontTorchView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var orientation: Orientation
 
     var body: some View {
-        if model.isPortrait() {
+        if orientation.isPortrait {
             VStack(spacing: 0) {
                 Rectangle()
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Rectangle()
                     .fill(
@@ -97,7 +123,7 @@ private struct FrontTorchView: View {
                     )
                     .aspectRatio(1, contentMode: .fill)
                 Rectangle()
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -105,7 +131,7 @@ private struct FrontTorchView: View {
         } else {
             HStack(spacing: 0) {
                 Rectangle()
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Rectangle()
                     .fill(
@@ -117,7 +143,7 @@ private struct FrontTorchView: View {
                     )
                     .aspectRatio(1, contentMode: .fill)
                 Rectangle()
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -128,11 +154,14 @@ private struct FrontTorchView: View {
 
 struct StreamOverlayView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var streamOverlay: StreamOverlay
+    @ObservedObject var chatSettings: SettingsChat
+    @ObservedObject var orientation: Orientation
     let width: CGFloat
     let height: CGFloat
 
     private func leadingPadding() -> CGFloat {
-        if UIDevice.current.userInterfaceIdiom == .pad || model.isPortrait() {
+        if UIDevice.current.userInterfaceIdiom == .pad || orientation.isPortrait {
             return 15
         } else {
             return 0
@@ -141,27 +170,33 @@ struct StreamOverlayView: View {
 
     var body: some View {
         ZStack {
-            if model.isTorchOn && model.isFrontCameraSelected {
-                FrontTorchView()
+            if streamOverlay.isTorchOn && streamOverlay.isFrontCameraSelected {
+                FrontTorchView(orientation: orientation)
             }
             ZStack {
                 if model.showingPanel != .chat {
-                    ChatOverlayView(height: height)
-                        .opacity(model.database.chat.enabled ? 1 : 0)
-                        .allowsHitTesting(model.interactiveChat)
+                    ChatOverlayView(chatSettings: chatSettings,
+                                    chat: model.chat,
+                                    orientation: orientation,
+                                    quickButtons: model.database.quickButtonsGeneral,
+                                    fullSize: false)
+                        .opacity(chatSettings.enabled ? 1 : 0)
                 }
                 HStack {
                     Spacer()
-                    RightOverlayBottomView(show: model.database.show, width: width)
+                    RightOverlayBottomView(show: model.database.show,
+                                           streamOverlay: model.streamOverlay,
+                                           zoom: model.zoom,
+                                           width: width)
                 }
                 HStack {
-                    LeftOverlayView()
+                    LeftOverlayView(model: model, database: model.database)
                         .padding([.leading], leadingPadding())
                     Spacer()
                 }
                 HStack {
                     Spacer()
-                    RightOverlayTopView()
+                    RightOverlayTopView(model: model, database: model.database)
                 }
                 HStack {
                     StreamOverlayDebugView(debugOverlay: model.debugOverlay)

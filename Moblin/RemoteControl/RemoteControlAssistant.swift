@@ -9,6 +9,9 @@ protocol RemoteControlAssistantDelegate: AnyObject {
     func remoteControlAssistantPreview(preview: Data)
     func remoteControlAssistantStateChanged(state: RemoteControlState)
     func remoteControlAssistantLog(entry: String)
+    func remoteControlAssistantStatus(general: RemoteControlStatusGeneral?,
+                                      topLeft: RemoteControlStatusTopLeft?,
+                                      topRight: RemoteControlStatusTopRight?)
 }
 
 private struct RemoteControlRequestResponse {
@@ -19,8 +22,6 @@ private struct RemoteControlRequestResponse {
 class RemoteControlAssistant: NSObject {
     private let port: UInt16
     private let password: String
-    private let httpProxy: HttpProxy?
-    private let urlSession: URLSession
     private var connected: Bool = false
     private var nextId: Int = 0
     private var requests: [Int: RemoteControlRequestResponse] = [:]
@@ -34,7 +35,7 @@ class RemoteControlAssistant: NSObject {
     private var salt = ""
     private var encryption: RemoteControlEncryption
     private var twitchEventSub: TwitchEventSub?
-    private var twitchChat: TwitchChatMoblin?
+    private var twitchChat: TwitchChat?
     private var twitchChannelName: String?
     private var twitchChannelId: String?
     private var twitchAccessToken: String?
@@ -50,15 +51,11 @@ class RemoteControlAssistant: NSObject {
     init(
         port: UInt16,
         password: String,
-        delegate: RemoteControlAssistantDelegate,
-        httpProxy: HttpProxy?,
-        urlSession: URLSession
+        delegate: RemoteControlAssistantDelegate
     ) {
         self.port = port
         self.password = password
         self.delegate = delegate
-        self.httpProxy = httpProxy
-        self.urlSession = urlSession
         encryption = RemoteControlEncryption(password: password)
         super.init()
     }
@@ -136,17 +133,24 @@ class RemoteControlAssistant: NSObject {
         performRequestNoResponseData(data: .setZoom(x: x), onSuccess: onSuccess)
     }
 
+    func setZoomPreset(id: UUID, onSuccess: @escaping () -> Void) {
+        performRequestNoResponseData(data: .setZoomPreset(id: id), onSuccess: onSuccess)
+    }
+
     func setMute(on: Bool, onSuccess: @escaping () -> Void) {
         performRequestNoResponseData(data: .setMute(on: on), onSuccess: onSuccess)
     }
 
-    // periphery:ignore
     func setTorch(on: Bool, onSuccess: @escaping () -> Void) {
         performRequestNoResponseData(data: .setTorch(on: on), onSuccess: onSuccess)
     }
 
     func setScene(id: UUID, onSuccess: @escaping () -> Void) {
         performRequestNoResponseData(data: .setScene(id: id), onSuccess: onSuccess)
+    }
+
+    func setAutoSceneSwitcher(id: UUID?, onSuccess: @escaping () -> Void) {
+        performRequestNoResponseData(data: .setAutoSceneSwitcher(id: id), onSuccess: onSuccess)
     }
 
     func setMic(id: String, onSuccess: @escaping () -> Void) {
@@ -195,6 +199,15 @@ class RemoteControlAssistant: NSObject {
         performRequestNoResponseData(data: .stopPreview, onSuccess: {})
     }
 
+    func startStatus() {
+        let filter = RemoteControlStartStatusFilter()
+        performRequestNoResponseData(data: .startStatus(interval: 1, filter: filter), onSuccess: {})
+    }
+
+    func stopStatus() {
+        performRequestNoResponseData(data: .stopStatus, onSuccess: {})
+    }
+
     private func tryNextTwitchEventSubNotification() {
         guard !twitchEventSubNotiticationWaitForResponse else {
             return
@@ -240,13 +253,12 @@ class RemoteControlAssistant: NSObject {
             parameters.defaultProtocolStack.applicationProtocols.append(options)
             server = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port)!)
             server?.newConnectionHandler = handleNewConnection
+            server?.stateUpdateHandler = handleStateUpdate
             server?.start(queue: .main)
-            stopRetryStartTimer()
         } catch {
-            logger.debug("remote-control-assistant: Failed to start server with error \(error)")
             connectionErrorMessage = error.localizedDescription
-            startRetryStartTimer()
         }
+        startRetryStartTimer()
     }
 
     private func startRetryStartTimer() {
@@ -319,6 +331,15 @@ class RemoteControlAssistant: NSObject {
         startPingTimer()
     }
 
+    private func handleStateUpdate(_ newState: NWListener.State) {
+        switch newState {
+        case .ready:
+            stopRetryStartTimer()
+        default:
+            break
+        }
+    }
+
     private func handleDisconnected(webSocket _: NWConnection) {
         logger.debug("remote-control-assistant: Streamer disconnected")
         stopKeepAlive()
@@ -374,9 +395,7 @@ class RemoteControlAssistant: NSObject {
                 try handleTwitchStart(
                     channelName: channelName,
                     channelId: channelId,
-                    accessToken: accessToken,
-                    httpProxy: httpProxy,
-                    urlSession: urlSession
+                    accessToken: accessToken
                 )
             case .ping:
                 handlePing()
@@ -394,8 +413,8 @@ class RemoteControlAssistant: NSObject {
         ) {
             streamerIdentified = true
             connected = true
-            delegate?.remoteControlAssistantConnected()
             send(message: .identified(result: .ok))
+            delegate?.remoteControlAssistantConnected()
             twitchEventSubNotiticationWaitForResponse = false
             tryNextTwitchEventSubNotification()
         } else {
@@ -416,6 +435,8 @@ class RemoteControlAssistant: NSObject {
             handleLogEvent(entry: entry)
         case .mediaShareSegmentReceived:
             break
+        case let .status(general: general, topLeft: topLeft, topRight: topRight):
+            handleStatusEvent(general: general, topLeft: topLeft, topRight: topRight)
         }
     }
 
@@ -451,9 +472,7 @@ class RemoteControlAssistant: NSObject {
     private func handleTwitchStart(
         channelName: String?,
         channelId: String,
-        accessToken: String,
-        httpProxy: HttpProxy?,
-        urlSession: URLSession
+        accessToken: String
     ) throws {
         guard streamerIdentified else {
             throw "Streamer not identified"
@@ -484,20 +503,16 @@ class RemoteControlAssistant: NSObject {
             remoteControl: false,
             userId: channelId,
             accessToken: accessToken,
-            httpProxy: httpProxy,
-            urlSession: urlSession,
             delegate: self
         )
         twitchEventSub?.start()
         twitchChat?.stop()
         if let channelName {
-            twitchChat = TwitchChatMoblin(delegate: self)
+            twitchChat = TwitchChat(delegate: self)
             twitchChat?.start(channelName: channelName,
                               channelId: channelId,
                               settings: SettingsStreamChat(),
-                              accessToken: accessToken,
-                              httpProxy: httpProxy,
-                              urlSession: urlSession)
+                              accessToken: accessToken)
         }
     }
 
@@ -512,6 +527,13 @@ class RemoteControlAssistant: NSObject {
 
     private func handleLogEvent(entry: String) {
         delegate?.remoteControlAssistantLog(entry: entry)
+    }
+
+    private func handleStatusEvent(general: RemoteControlStatusGeneral?,
+                                   topLeft: RemoteControlStatusTopLeft?,
+                                   topRight: RemoteControlStatusTopRight?)
+    {
+        delegate?.remoteControlAssistantStatus(general: general, topLeft: topLeft, topRight: topRight)
     }
 
     private func performRequest(
@@ -592,11 +614,13 @@ extension RemoteControlAssistant: TwitchEventSubDelegate {
     }
 }
 
-extension RemoteControlAssistant: TwitchChatMoblinDelegate {
-    func twitchChatMoblinMakeErrorToast(title _: String, subTitle _: String?) {}
+extension RemoteControlAssistant: TwitchChatDelegate {
+    func twitchChatMakeErrorToast(title _: String, subTitle _: String?) {}
 
-    func twitchChatMoblinAppendMessage(
-        user: String?,
+    func twitchChatAppendMessage(
+        messageId: String?,
+        displayName: String,
+        user: String,
         userId: String?,
         userColor: RgbColor?,
         userBadges: [URL],
@@ -610,6 +634,8 @@ extension RemoteControlAssistant: TwitchChatMoblinDelegate {
         let timestamp = digitalClockFormatter.string(from: Date())
         let message = RemoteControlChatMessage(id: getNextChatMessageId(),
                                                platform: .twitch,
+                                               messageId: messageId,
+                                               displayName: displayName,
                                                user: user,
                                                userId: userId,
                                                userColor: userColor,
@@ -619,6 +645,7 @@ extension RemoteControlAssistant: TwitchChatMoblinDelegate {
                                                isAction: isAction,
                                                isModerator: isModerator,
                                                isSubscriber: isSubscriber,
+                                               isOwner: false,
                                                bits: bits)
         chatMessageHistory.append(message)
         if chatMessageHistory.count > 100 {
@@ -626,4 +653,8 @@ extension RemoteControlAssistant: TwitchChatMoblinDelegate {
         }
         sendChatMessage(message: message)
     }
+
+    func twitchChatDeleteMessage(messageId _: String) {}
+
+    func twitchChatDeleteUser(userId _: String) {}
 }

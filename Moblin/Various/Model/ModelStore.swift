@@ -23,10 +23,12 @@ private let iconsProductIds = [
     "AppIconGoblin",
     "AppIconGoblina",
     "AppIconTetris",
+    "AppIconHappy",
     "AppIconMillionaire",
     "AppIconBillionaire",
     "AppIconTrillionaire",
     "AppIconIreland",
+    "AppIconPeru",
 ]
 
 struct Icon: Identifiable {
@@ -100,6 +102,7 @@ extension Model {
 
     private func updateIcons(myProductIds: [String]) {
         var myIcons = globalMyIcons
+        cosmetics.hasBoughtSomething = false
         var iconsInStore: [Icon] = []
         for productId in iconsProductIds {
             guard let product = products[productId] else {
@@ -112,6 +115,7 @@ extension Model {
                     id: product.id,
                     price: product.displayPrice
                 ))
+                cosmetics.hasBoughtSomething = true
             } else {
                 iconsInStore.append(Icon(
                     name: product.displayName,
@@ -120,8 +124,8 @@ extension Model {
                 ))
             }
         }
-        self.myIcons = myIcons
-        self.iconsInStore = iconsInStore
+        cosmetics.myIcons = myIcons
+        cosmetics.iconsInStore = iconsInStore
     }
 
     private func findProduct(id: String) -> Product? {
@@ -150,7 +154,7 @@ extension Model {
     }
 
     private func isInMyIcons(id: String) -> Bool {
-        return myIcons.contains(where: { icon in
+        return cosmetics.myIcons.contains(where: { icon in
             icon.id == id
         })
     }
@@ -160,6 +164,6 @@ extension Model {
             logger.warning("Database icon image \(database.iconImage) is not mine")
             database.iconImage = plainIcon.id
         }
-        iconImage = database.iconImage
+        cosmetics.iconImage = database.iconImage
     }
 }

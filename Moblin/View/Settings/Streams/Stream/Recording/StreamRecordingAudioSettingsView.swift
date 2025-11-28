@@ -2,7 +2,7 @@ import SwiftUI
 
 struct StreamRecordingAudioSettingsView: View {
     @EnvironmentObject var model: Model
-    var stream: SettingsStream
+    let stream: SettingsStream
     @State var bitrate: Float
 
     private func calcBitrate() -> UInt32 {
@@ -17,6 +17,9 @@ struct StreamRecordingAudioSettingsView: View {
                         value: $bitrate,
                         in: 0 ... 192,
                         step: 32,
+                        label: {
+                            EmptyView()
+                        },
                         onEditingChanged: { begin in
                             guard !begin else {
                                 return

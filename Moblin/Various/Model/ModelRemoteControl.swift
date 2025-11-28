@@ -2,6 +2,28 @@ import CoreLocation
 import Foundation
 import UIKit
 
+class RemoteControl: ObservableObject {
+    @Published var general: RemoteControlStatusGeneral?
+    @Published var topLeft: RemoteControlStatusTopLeft?
+    @Published var topRight: RemoteControlStatusTopRight?
+    @Published var settings: RemoteControlSettings?
+    @Published var scene = UUID()
+    @Published var autoSceneSwitcher: UUID?
+    @Published var mic = ""
+    @Published var bitrate = UUID()
+    @Published var zoom = ""
+    @Published var zoomPresets: [RemoteControlZoomPreset] = []
+    @Published var zoomPreset = UUID()
+    @Published var debugLogging = false
+    @Published var assistantShowPreview = true
+    @Published var assistantShowPreviewFullScreen = false
+    @Published var assistantShowStreamers = false
+    @Published var preview: UIImage?
+    @Published var recording: Bool = false
+    @Published var streaming: Bool = false
+    @Published var muted: Bool = false
+}
+
 enum RemoteControlAssistantPreviewUser {
     case panel
     case watch
@@ -28,14 +50,14 @@ extension Model {
             reloadChats()
             return
         }
-        guard let url = URL(string: database.remoteControl.server.url) else {
+        guard let url = URL(string: database.remoteControl.streamer.url) else {
             reloadTwitchEventSub()
             reloadChats()
             return
         }
         remoteControlStreamer = RemoteControlStreamer(
             clientUrl: url,
-            password: database.remoteControl.password!,
+            password: database.remoteControl.password,
             delegate: self
         )
         remoteControlStreamer!.start()
@@ -50,30 +72,34 @@ extension Model {
     }
 
     func updateRemoteControlStatus() {
+        let status: String
         if isRemoteControlAssistantConnected(), isRemoteControlStreamerConnected() {
-            remoteControlStatus = String(localized: "Assistant and streamer")
+            status = String(localized: "Assistant and streamer")
         } else if isRemoteControlAssistantConnected() {
-            remoteControlStatus = String(localized: "Assistant")
+            status = String(localized: "Assistant")
         } else if isRemoteControlStreamerConnected() {
-            remoteControlStatus = String(localized: "Streamer")
+            status = String(localized: "Streamer")
         } else {
             let assistantError = remoteControlAssistant?.connectionErrorMessage ?? ""
             let streamerError = remoteControlStreamer?.connectionErrorMessage ?? ""
             if isRemoteControlAssistantConfigured(), isRemoteControlStreamerConfigured() {
-                remoteControlStatus = "\(assistantError), \(streamerError)"
+                status = "\(assistantError), \(streamerError)"
             } else if isRemoteControlAssistantConfigured() {
-                remoteControlStatus = assistantError
+                status = assistantError
             } else if isRemoteControlStreamerConfigured() {
-                remoteControlStatus = streamerError
+                status = streamerError
             } else {
-                remoteControlStatus = noValue
+                status = noValue
             }
+        }
+        if status != statusTopRight.remoteControlStatus {
+            statusTopRight.remoteControlStatus = status
         }
     }
 
     func isRemoteControlStreamerConfigured() -> Bool {
-        let server = database.remoteControl.server
-        return server.enabled && !server.url.isEmpty && !database.remoteControl.password!.isEmpty
+        let streamer = database.remoteControl.streamer
+        return streamer.enabled && !streamer.url.isEmpty && !database.remoteControl.password.isEmpty
     }
 
     func isRemoteControlStreamerConnected() -> Bool {
@@ -91,11 +117,9 @@ extension Model {
             return
         }
         remoteControlAssistant = RemoteControlAssistant(
-            port: database.remoteControl.client.port,
-            password: database.remoteControl.password!,
-            delegate: self,
-            httpProxy: httpProxy(),
-            urlSession: urlSession
+            port: database.remoteControl.assistant.port,
+            password: database.remoteControl.password,
+            delegate: self
         )
         remoteControlAssistant!.start()
     }
@@ -109,21 +133,21 @@ extension Model {
             return
         }
         remoteControlAssistant?.getStatus { general, topLeft, topRight in
-            self.remoteControlGeneral = general
-            self.remoteControlTopLeft = topLeft
-            self.remoteControlTopRight = topRight
+            self.remoteControl.general = general
+            self.remoteControl.topLeft = topLeft
+            self.remoteControl.topRight = topRight
             if self.isWatchRemoteControl() {
                 self.sendRemoteControlAssistantStatusToWatch()
             }
         }
         remoteControlAssistant?.getSettings { settings in
-            self.remoteControlSettings = settings
+            self.remoteControl.settings = settings
         }
     }
 
     func isRemoteControlAssistantConfigured() -> Bool {
-        let client = database.remoteControl.client
-        return client.enabled && client.port > 0 && !database.remoteControl.password!.isEmpty
+        let assistant = database.remoteControl.assistant
+        return assistant.enabled && assistant.port > 0 && !database.remoteControl.password.isEmpty
     }
 
     func remoteControlAssistantSetRemoteSceneSettings() {
@@ -187,6 +211,14 @@ extension Model {
         }
     }
 
+    func remoteControlAssistantSetAutoSceneSwitcher(id: UUID?) {
+        remoteControlAssistant?.setAutoSceneSwitcher(id: id) {
+            DispatchQueue.main.async {
+                self.updateRemoteControlAssistantStatus()
+            }
+        }
+    }
+
     func remoteControlAssistantSetMic(id: String) {
         remoteControlAssistant?.setMic(id: id) {
             DispatchQueue.main.async {
@@ -196,11 +228,11 @@ extension Model {
     }
 
     func remoteControlAssistantSetZoom(x: Float) {
-        remoteControlAssistant?.setZoom(x: x) {
-            DispatchQueue.main.async {
-                self.updateRemoteControlAssistantStatus()
-            }
-        }
+        remoteControlAssistant?.setZoom(x: x) {}
+    }
+
+    func remoteControlAssistantSetZoomPreset(id: UUID) {
+        remoteControlAssistant?.setZoomPreset(id: id) {}
     }
 
     func remoteControlAssistantSetBitratePreset(id: UUID) {
@@ -249,73 +281,61 @@ extension Model {
         }
     }
 
+    func remoteControlAssistantStartStatus() {
+        remoteControlAssistantStatusRequested = true
+        remoteControlAssistant?.startStatus()
+    }
+
+    func remoteControlAssistantStopStatus() {
+        remoteControlAssistantStatusRequested = false
+        remoteControlAssistant?.stopStatus()
+    }
+
     func reloadRemoteControlRelay() {
         remoteControlRelay?.stop()
         remoteControlRelay = nil
         guard isRemoteControlRelayConfigured() else {
             return
         }
-        guard let assistantUrl = URL(string: "ws://localhost:\(database.remoteControl.client.port)") else {
+        guard let assistantUrl = URL(string: "ws://localhost:\(database.remoteControl.assistant.port)") else {
             return
         }
         remoteControlRelay = RemoteControlRelay(
-            baseUrl: database.remoteControl.client.relay!.baseUrl,
-            bridgeId: database.remoteControl.client.relay!.bridgeId,
+            baseUrl: database.remoteControl.assistant.relay.baseUrl,
+            bridgeId: database.remoteControl.assistant.relay.bridgeId,
             assistantUrl: assistantUrl
         )
         remoteControlRelay?.start()
     }
 
     func isRemoteControlRelayConfigured() -> Bool {
-        let relay = database.remoteControl.client.relay!
+        let relay = database.remoteControl.assistant.relay
         return relay.enabled && !relay.baseUrl.isEmpty
     }
-}
 
-extension Model: RemoteControlStreamerDelegate {
-    func remoteControlStreamerConnected() {
-        makeToast(
-            title: String(localized: "Remote control assistant connected"),
-            subTitle: String(localized: "Reliable alerts and chat messages activated")
-        )
-        useRemoteControlForChatAndEvents = true
-        reloadTwitchEventSub()
-        reloadChats()
-        isRemoteControlAssistantRequestingPreview = false
-        remoteControlStreamerSendTwitchStart()
-        setLowFpsImage()
-        updateRemoteControlStatus()
-        var state = RemoteControlState()
-        if sceneIndex < enabledScenes.count {
-            state.scene = enabledScenes[sceneIndex].id
+    func remoteControlStreamerCreateStatus(filter: RemoteControlStartStatusFilter?)
+        -> (RemoteControlStatusGeneral?, RemoteControlStatusTopLeft?, RemoteControlStatusTopRight?)
+    {
+        var general: RemoteControlStatusGeneral?
+        var topLeft: RemoteControlStatusTopLeft?
+        var topRight: RemoteControlStatusTopRight?
+        if let filter {
+            if filter.topRight {
+                topRight = remoteControlStreamerCreateStatusTopRight()
+            }
+        } else {
+            general = remoteControlStreamerCreateStatusGeneral()
+            topLeft = remoteControlStreamerCreateStatusTopLeft()
+            topRight = remoteControlStreamerCreateStatusTopRight()
         }
-        state.mic = currentMic.id
-        if let preset = getBitratePresetByBitrate(bitrate: stream.bitrate) {
-            state.bitrate = preset.id
-        }
-        state.zoom = zoomX
-        state.debugLogging = database.debug.logLevel == .debug
-        state.streaming = isLive
-        state.recording = isRecording
-        remoteControlStreamer?.stateChanged(state: state)
+        return (general, topLeft, topRight)
     }
 
-    func remoteControlStreamerDisconnected() {
-        makeToast(title: String(localized: "Remote control assistant disconnected"))
-        isRemoteControlAssistantRequestingPreview = false
-        setLowFpsImage()
-        updateRemoteControlStatus()
-    }
-
-    func remoteControlStreamerGetStatus(onComplete: @escaping (
-        RemoteControlStatusGeneral,
-        RemoteControlStatusTopLeft,
-        RemoteControlStatusTopRight
-    ) -> Void) {
+    private func remoteControlStreamerCreateStatusGeneral() -> RemoteControlStatusGeneral {
         var general = RemoteControlStatusGeneral()
         general.batteryCharging = isBatteryCharging()
-        general.batteryLevel = Int(100 * batteryLevel)
-        switch thermalState {
+        general.batteryLevel = Int(100 * battery.level)
+        switch statusOther.thermalState {
         case .nominal:
             general.flame = .white
         case .fair:
@@ -331,65 +351,73 @@ extension Model: RemoteControlStreamerDelegate {
         general.isLive = isLive
         general.isRecording = isRecording
         general.isMuted = isMuteOn
+        return general
+    }
+
+    private func remoteControlStreamerCreateStatusTopLeft() -> RemoteControlStatusTopLeft {
         var topLeft = RemoteControlStatusTopLeft()
         if isStreamConfigured() {
-            topLeft.stream = RemoteControlStatusItem(message: statusStreamText())
+            topLeft.stream = RemoteControlStatusItem(message: statusTopLeft.streamText)
         }
-        topLeft.camera = RemoteControlStatusItem(message: statusCameraText())
-        topLeft.mic = RemoteControlStatusItem(message: currentMic.name)
-        if hasZoom {
-            topLeft.zoom = RemoteControlStatusItem(message: statusZoomText())
+        topLeft.camera = RemoteControlStatusItem(message: statusTopLeft.statusCameraText)
+        topLeft.mic = RemoteControlStatusItem(message: mic.current.name)
+        if zoom.hasZoom {
+            topLeft.zoom = RemoteControlStatusItem(message: zoom.statusText())
         }
         if isObsRemoteControlConfigured() {
-            topLeft.obs = RemoteControlStatusItem(message: statusObsText())
+            topLeft.obs = RemoteControlStatusItem(message: statusTopLeft.statusObsText)
         }
         if isEventsConfigured() {
-            topLeft.events = RemoteControlStatusItem(message: statusEventsText)
+            topLeft.events = RemoteControlStatusItem(message: statusTopLeft.statusEventsText)
         }
         if isChatConfigured() {
-            topLeft.chat = RemoteControlStatusItem(message: statusChatText)
+            topLeft.chat = RemoteControlStatusItem(message: statusTopLeft.statusChatText)
         }
         if isViewersConfigured() && isLive {
             topLeft.viewers = RemoteControlStatusItem(message: statusViewersText())
         }
+        return topLeft
+    }
+
+    private func remoteControlStreamerCreateStatusTopRight() -> RemoteControlStatusTopRight {
         var topRight = RemoteControlStatusTopRight()
-        let level = formatAudioLevel(level: audio.level) +
+        let level = formatAudioLevel(level: audio.level.level) +
             formatAudioLevelChannels(channels: audio.numberOfChannels)
         topRight.audioLevel = RemoteControlStatusItem(message: level)
         topRight.audioInfo = .init(
             audioLevel: .unknown,
             numberOfAudioChannels: audio.numberOfChannels
         )
-        if audio.level.isNaN {
+        if audio.level.level.isNaN {
             topRight.audioInfo!.audioLevel = .muted
-        } else if audio.level.isInfinite {
+        } else if audio.level.level.isInfinite {
             topRight.audioInfo!.audioLevel = .unknown
         } else {
-            topRight.audioInfo!.audioLevel = .value(audio.level)
+            topRight.audioInfo!.audioLevel = .value(audio.level.level)
         }
-        if isServersConfigured() {
-            topRight.rtmpServer = RemoteControlStatusItem(message: serversSpeedAndTotal)
+        if isIngestsConfigured() {
+            topRight.rtmpServer = RemoteControlStatusItem(message: ingests.speedAndTotal)
         }
         if isAnyRemoteControlConfigured() {
-            topRight.remoteControl = RemoteControlStatusItem(message: remoteControlStatus)
+            topRight.remoteControl = RemoteControlStatusItem(message: statusTopRight.remoteControlStatus)
         }
         if isGameControllerConnected() {
-            topRight.gameController = RemoteControlStatusItem(message: gameControllersTotal)
+            topRight.gameController = RemoteControlStatusItem(message: statusTopRight.gameControllersTotal)
         }
         if isLive {
-            topRight.bitrate = RemoteControlStatusItem(message: speedAndTotal)
+            topRight.bitrate = RemoteControlStatusItem(message: bitrate.speedAndTotal)
         }
         if isLive {
             topRight.uptime = RemoteControlStatusItem(message: streamUptime.uptime)
         }
         if isLocationEnabled() {
-            topRight.location = RemoteControlStatusItem(message: location)
+            topRight.location = RemoteControlStatusItem(message: statusTopRight.location)
         }
         if isStatusBondingActive() {
-            topRight.srtla = RemoteControlStatusItem(message: bondingStatistics)
+            topRight.srtla = RemoteControlStatusItem(message: bonding.statistics)
         }
         if isStatusBondingRttsActive() {
-            topRight.srtlaRtts = RemoteControlStatusItem(message: bondingRtts)
+            topRight.srtlaRtts = RemoteControlStatusItem(message: bonding.rtts)
         }
         if isRecording {
             topRight.recording = RemoteControlStatusItem(message: recording.length)
@@ -398,147 +426,216 @@ extension Model: RemoteControlStreamerDelegate {
             topRight.replay = RemoteControlStatusItem(message: String(localized: "Enabled"))
         }
         if isStatusBrowserWidgetsActive() {
-            topRight.browserWidgets = RemoteControlStatusItem(message: browserWidgetsStatus)
+            topRight.browserWidgets = RemoteControlStatusItem(message: statusTopRight.browserWidgetsStatus)
         }
         if isAnyMoblinkConfigured() {
-            topRight.moblink = RemoteControlStatusItem(message: moblinkStatus)
+            topRight.moblink = RemoteControlStatusItem(message: moblink.status)
         }
-        if !djiDevicesStatus.isEmpty {
-            topRight.djiDevices = RemoteControlStatusItem(message: djiDevicesStatus)
+        if !statusTopRight.djiDevicesStatus.isEmpty {
+            topRight.djiDevices = RemoteControlStatusItem(message: statusTopRight.djiDevicesStatus)
         }
-        onComplete(general, topLeft, topRight)
+        if database.show.systemMonitor {
+            topRight.systemMonitor = RemoteControlStatusItem(message: systemMonitor.format())
+        }
+        return topRight
     }
 
-    func remoteControlStreamerGetSettings(onComplete: @escaping (RemoteControlSettings) -> Void) {
-        let scenes = enabledScenes.map { scene in
-            RemoteControlSettingsScene(id: scene.id, name: scene.name)
+    func sendPeriodicRemoteControlStreamerStatus() {
+        guard isRemoteControlStreamerConnected(), isRemoteControlAssistantRequestingStatus else {
+            return
         }
-        let mics = listMics().map { mic in
-            RemoteControlSettingsMic(id: mic.id, name: mic.name)
+        let (general,
+             topLeft,
+             topRight) = remoteControlStreamerCreateStatus(filter: remoteControlAssistantRequestingStatusFilter)
+        remoteControlStreamer?.sendStatus(general: general, topLeft: topLeft, topRight: topRight)
+    }
+
+    func isRemoteControlStreamerPreviewActive() -> Bool {
+        return isRemoteControlStreamerConnected()
+            && isRemoteControlAssistantRequestingPreview
+            && database.remoteControl.streamer.previewFps > 0
+    }
+}
+
+extension Model: RemoteControlStreamerDelegate {
+    func remoteControlStreamerConnected() {
+        makeToast(
+            title: String(localized: "Remote control assistant connected"),
+            subTitle: String(localized: "Reliable alerts and chat messages activated")
+        )
+        useRemoteControlForChatAndEvents = true
+        reloadTwitchEventSub()
+        reloadChats()
+        isRemoteControlAssistantRequestingPreview = false
+        isRemoteControlAssistantRequestingStatus = false
+        remoteControlStreamerSendTwitchStart()
+        setLowFpsImage()
+        updateRemoteControlStatus()
+        var state = RemoteControlState()
+        if sceneSelector.sceneIndex < enabledScenes.count {
+            state.scene = enabledScenes[sceneSelector.sceneIndex].id
         }
-        let bitratePresets = database.bitratePresets.map { preset in
-            RemoteControlSettingsBitratePreset(id: preset.id, bitrate: preset.bitrate)
+        state.autoSceneSwitcher = .init(id: autoSceneSwitcher.currentSwitcherId)
+        state.mic = mic.current.id
+        if let preset = getBitratePresetByBitrate(bitrate: stream.bitrate) {
+            state.bitrate = preset.id
         }
-        let connectionPriorities = stream.srt.connectionPriorities!.priorities
-            .map { priority in
+        switch cameraPosition {
+        case .front:
+            state.zoomPresets = zoom.frontZoomPresets.map { RemoteControlZoomPreset(id: $0.id, name: $0.name) }
+            state.zoomPreset = zoom.frontPresetId
+        case .back:
+            state.zoomPresets = zoom.backZoomPresets.map { RemoteControlZoomPreset(id: $0.id, name: $0.name) }
+            state.zoomPreset = zoom.backPresetId
+        default:
+            state.zoomPresets = []
+        }
+        state.zoom = zoom.x
+        state.debugLogging = database.debug.logLevel == .debug
+        state.streaming = isLive
+        state.recording = isRecording
+        state.muted = isMuteOn
+        state.torchOn = streamOverlay.isTorchOn
+        state.batteryCharging = isBatteryCharging()
+        remoteControlStreamer?.stateChanged(state: state)
+    }
+
+    func remoteControlStreamerDisconnected() {
+        makeToast(title: String(localized: "Remote control assistant disconnected"))
+        isRemoteControlAssistantRequestingPreview = false
+        isRemoteControlAssistantRequestingStatus = false
+        setLowFpsImage()
+        updateRemoteControlStatus()
+    }
+
+    func remoteControlStreamerGetStatus()
+        -> (RemoteControlStatusGeneral, RemoteControlStatusTopLeft, RemoteControlStatusTopRight)
+    {
+        let (general, topLeft, topRight) = remoteControlStreamerCreateStatus(filter: nil)
+        return (general!, topLeft!, topRight!)
+    }
+
+    func remoteControlStreamerGetSettings() -> RemoteControlSettings {
+        let scenes = enabledScenes.map {
+            RemoteControlSettingsScene(id: $0.id, name: $0.name)
+        }
+        let autoSceneSwitchers = database.autoSceneSwitchers.switchers.map {
+            RemoteControlSettingsAutoSceneSwitcher(id: $0.id, name: $0.name)
+        }
+        let mics = database.mics.mics.map {
+            RemoteControlSettingsMic(id: $0.id, name: $0.name)
+        }
+        let bitratePresets = database.bitratePresets.map {
+            RemoteControlSettingsBitratePreset(id: $0.id, bitrate: $0.bitrate)
+        }
+        let connectionPriorities = stream.srt.connectionPriorities.priorities
+            .map {
                 RemoteControlSettingsSrtConnectionPriority(
-                    id: priority.id,
-                    name: priority.name,
-                    priority: priority.priority,
-                    enabled: priority.enabled!
+                    id: $0.id,
+                    name: $0.name,
+                    priority: $0.priority,
+                    enabled: $0.enabled
                 )
             }
-        let connectionPrioritiesEnabled = stream.srt.connectionPriorities!.enabled
-        onComplete(RemoteControlSettings(
+        let connectionPrioritiesEnabled = stream.srt.connectionPriorities.enabled
+        return RemoteControlSettings(
             scenes: scenes,
+            autoSceneSwitchers: autoSceneSwitchers,
             bitratePresets: bitratePresets,
             mics: mics,
             srt: RemoteControlSettingsSrt(
                 connectionPrioritiesEnabled: connectionPrioritiesEnabled,
                 connectionPriorities: connectionPriorities
             )
-        ))
+        )
     }
 
-    func remoteControlStreamerSetScene(id: UUID, onComplete: @escaping () -> Void) {
+    func remoteControlStreamerSetScene(id: UUID) {
         selectScene(id: id)
-        onComplete()
     }
 
-    func remoteControlStreamerSetMic(id: String, onComplete: @escaping () -> Void) {
-        selectMicById(id: id)
-        onComplete()
+    func remoteControlStreamerSetAutoSceneSwitcher(id: UUID?) {
+        autoSceneSwitcher.currentSwitcherId = id
+        setAutoSceneSwitcher(id: id)
     }
 
-    func remoteControlStreamerSetBitratePreset(id: UUID, onComplete: @escaping () -> Void) {
+    func remoteControlStreamerSetMic(id: String) {
+        manualSelectMicById(id: id)
+    }
+
+    func remoteControlStreamerSetBitratePreset(id: UUID) {
         guard let preset = database.bitratePresets.first(where: { preset in
             preset.id == id
         }) else {
             return
         }
         setBitrate(bitrate: preset.bitrate)
-        onComplete()
     }
 
-    func remoteControlStreamerSetRecord(on: Bool, onComplete: @escaping () -> Void) {
+    func remoteControlStreamerSetRecord(on: Bool) {
         if on {
             startRecording()
         } else {
             stopRecording()
         }
         updateQuickButtonStates()
-        onComplete()
     }
 
-    func remoteControlStreamerSetStream(on: Bool, onComplete: @escaping () -> Void) {
+    func remoteControlStreamerSetStream(on: Bool) {
         if on {
             startStream()
         } else {
-            stopStream()
+            _ = stopStream()
         }
         updateQuickButtonStates()
-        onComplete()
     }
 
-    func remoteControlStreamerSetDebugLogging(on: Bool, onComplete: @escaping () -> Void) {
+    func remoteControlStreamerSetDebugLogging(on: Bool) {
         setDebugLogging(on: on)
-        onComplete()
     }
 
-    func remoteControlStreamerSetZoom(x: Float, onComplete: @escaping () -> Void) {
-        setZoomX(x: x, rate: database.zoom.speed!)
-        onComplete()
+    func remoteControlStreamerSetZoom(x: Float) {
+        setZoomX(x: x, rate: database.zoom.speed)
     }
 
-    func remoteControlStreamerSetMute(on: Bool, onComplete: @escaping () -> Void) {
+    func remoteControlStreamerSetZoomPreset(id: UUID) {
+        setZoomPreset(id: id)
+    }
+
+    func remoteControlStreamerSetMute(on: Bool) {
         setMuteOn(value: on)
-        onComplete()
     }
 
-    func remoteControlStreamerSetTorch(on: Bool, onComplete: @escaping () -> Void) {
-        if on {
-            isTorchOn = true
-        } else {
-            isTorchOn = false
-        }
+    func remoteControlStreamerSetTorch(on: Bool) {
+        streamOverlay.isTorchOn = on
         updateTorch()
         toggleGlobalButton(type: .torch)
         updateQuickButtonStates()
-        onComplete()
     }
 
-    func remoteControlStreamerReloadBrowserWidgets(onComplete: @escaping () -> Void) {
+    func remoteControlStreamerReloadBrowserWidgets() {
         reloadBrowserWidgets()
-        onComplete()
     }
 
-    func remoteControlStreamerSetSrtConnectionPrioritiesEnabled(
-        enabled: Bool,
-        onComplete: @escaping () -> Void
-    ) {
-        DispatchQueue.main.async {
-            self.stream.srt.connectionPriorities!.enabled = enabled
-            self.updateSrtlaPriorities()
-            onComplete()
-        }
+    func remoteControlStreamerSetSrtConnectionPrioritiesEnabled(enabled: Bool) {
+        stream.srt.connectionPriorities.enabled = enabled
+        updateSrtlaPriorities()
     }
 
     func remoteControlStreamerSetSrtConnectionPriority(
         id: UUID,
         priority: Int,
-        enabled: Bool,
-        onComplete: @escaping () -> Void
+        enabled: Bool
     ) {
-        if let entry = stream.srt.connectionPriorities!.priorities.first(where: { $0.id == id }) {
+        if let entry = stream.srt.connectionPriorities.priorities.first(where: { $0.id == id }) {
             entry.priority = clampConnectionPriority(value: priority)
             entry.enabled = enabled
             updateSrtlaPriorities()
         }
-        onComplete()
     }
 
     func sendPreviewToRemoteControlAssistant(preview: Data) {
-        guard isRemoteControlStreamerConnected() else {
+        guard isRemoteControlStreamerPreviewActive() else {
             return
         }
         remoteControlStreamer?.sendPreview(preview: preview)
@@ -552,6 +649,8 @@ extension Model: RemoteControlStreamerDelegate {
         let live = !history || remoteControlStreamerLatestReceivedChatMessageId != -1
         for message in messages where message.id > remoteControlStreamerLatestReceivedChatMessageId {
             appendChatMessage(platform: message.platform,
+                              messageId: message.messageId,
+                              displayName: message.displayName,
                               user: message.user,
                               userId: message.userId,
                               userColor: message.userColor,
@@ -562,6 +661,7 @@ extension Model: RemoteControlStreamerDelegate {
                               isAction: message.isAction,
                               isSubscriber: message.isSubscriber,
                               isModerator: message.isModerator,
+                              isOwner: message.isOwner,
                               bits: message.bits,
                               highlight: nil,
                               live: live)
@@ -569,12 +669,12 @@ extension Model: RemoteControlStreamerDelegate {
         }
     }
 
-    func remoteControlStreamerStartPreview(onComplete _: @escaping () -> Void) {
+    func remoteControlStreamerStartPreview() {
         isRemoteControlAssistantRequestingPreview = true
         setLowFpsImage()
     }
 
-    func remoteControlStreamerStopPreview(onComplete _: @escaping () -> Void) {
+    func remoteControlStreamerStopPreview() {
         isRemoteControlAssistantRequestingPreview = false
         setLowFpsImage()
     }
@@ -618,6 +718,16 @@ extension Model: RemoteControlStreamerDelegate {
         remoteSceneData.textStats = nil
         remoteSceneData.location = nil
     }
+
+    func remoteControlStreamerStartStatus(interval _: Int, filter: RemoteControlStartStatusFilter) {
+        isRemoteControlAssistantRequestingStatus = true
+        remoteControlAssistantRequestingStatusFilter = filter
+    }
+
+    func remoteControlStreamerStopStatus() {
+        isRemoteControlAssistantRequestingStatus = false
+        remoteControlAssistantRequestingStatusFilter = nil
+    }
 }
 
 extension Model: RemoteControlAssistantDelegate {
@@ -626,41 +736,65 @@ extension Model: RemoteControlAssistantDelegate {
         updateRemoteControlStatus()
         updateRemoteControlAssistantStatus()
         remoteControlAssistantSetRemoteSceneSettings()
+        if !remoteControlAssistantPreviewUsers.isEmpty {
+            remoteControlAssistant?.startPreview()
+        }
+        if remoteControlAssistantStatusRequested {
+            remoteControlAssistant?.startStatus()
+        }
     }
 
     func remoteControlAssistantDisconnected() {
         makeToast(title: String(localized: "Remote control streamer disconnected"))
-        remoteControlTopLeft = nil
-        remoteControlTopRight = nil
+        remoteControl.topLeft = nil
+        remoteControl.topRight = nil
         updateRemoteControlStatus()
     }
 
     func remoteControlAssistantStateChanged(state: RemoteControlState) {
         if let scene = state.scene {
             remoteControlState.scene = scene
-            remoteControlScene = scene
+            remoteControl.scene = scene
+        }
+        if let autoSceneSwitcher = state.autoSceneSwitcher {
+            remoteControlState.autoSceneSwitcher = autoSceneSwitcher
+            remoteControl.autoSceneSwitcher = autoSceneSwitcher.id
         }
         if let mic = state.mic {
             remoteControlState.mic = mic
-            remoteControlMic = mic
+            remoteControl.mic = mic
         }
         if let bitrate = state.bitrate {
             remoteControlState.bitrate = bitrate
-            remoteControlBitrate = bitrate
+            remoteControl.bitrate = bitrate
+        }
+        if let zoomPresets = state.zoomPresets {
+            remoteControlState.zoomPresets = zoomPresets
+            remoteControl.zoomPresets = zoomPresets
+        }
+        if let zoomPreset = state.zoomPreset {
+            remoteControlState.zoomPreset = zoomPreset
+            remoteControl.zoomPreset = zoomPreset
         }
         if let zoom = state.zoom {
             remoteControlState.zoom = zoom
-            remoteControlZoom = String(zoom)
+            remoteControl.zoom = String(zoom)
         }
         if let debugLogging = state.debugLogging {
             remoteControlState.debugLogging = debugLogging
-            remoteControlDebugLogging = debugLogging
+            remoteControl.debugLogging = debugLogging
         }
         if let streaming = state.streaming {
             remoteControlState.streaming = streaming
+            remoteControl.streaming = streaming
         }
         if let recording = state.recording {
             remoteControlState.recording = recording
+            remoteControl.recording = recording
+        }
+        if let muted = state.muted {
+            remoteControlState.muted = muted
+            remoteControl.muted = muted
         }
         if isWatchRemoteControl() {
             sendRemoteControlAssistantStatusToWatch()
@@ -668,7 +802,7 @@ extension Model: RemoteControlAssistantDelegate {
     }
 
     func remoteControlAssistantPreview(preview: Data) {
-        remoteControlPreview = UIImage(data: preview)
+        remoteControl.preview = UIImage(data: preview)
         if isWatchRemoteControl() {
             sendPreviewToWatch(image: preview)
         }
@@ -680,5 +814,14 @@ extension Model: RemoteControlAssistantDelegate {
         }
         logId += 1
         remoteControlAssistantLog.append(LogEntry(id: logId, message: entry))
+    }
+
+    func remoteControlAssistantStatus(general _: RemoteControlStatusGeneral?,
+                                      topLeft _: RemoteControlStatusTopLeft?,
+                                      topRight: RemoteControlStatusTopRight?)
+    {
+        if let topRight {
+            remoteControl.topRight = topRight
+        }
     }
 }

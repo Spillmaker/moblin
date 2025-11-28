@@ -1,31 +1,27 @@
 import SwiftUI
 
 private struct StreamingHistorySettingsSummaryView: View {
-    @EnvironmentObject var model: Model
-
-    private var history: StreamingHistory {
-        model.streamingHistory
-    }
+    @ObservedObject var database: StreamingHistoryDatabase
 
     var body: some View {
         HStack {
             Spacer()
             VStack {
-                Text("\(history.database.totalStreams!)")
+                Text("\(database.totalStreams)")
                     .font(.title2)
                 Text("Total streams")
                     .font(.subheadline)
             }
             Spacer()
             VStack {
-                Text(history.database.totalTime!.format())
+                Text(database.totalTime.format())
                     .font(.title2)
                 Text("Total time")
                     .font(.subheadline)
             }
             Spacer()
             VStack {
-                Text(history.database.totalBytes!.formatBytes())
+                Text(database.totalBytes.formatBytes())
                     .font(.title2)
                 Text("Total sent")
                     .font(.subheadline)
@@ -36,7 +32,8 @@ private struct StreamingHistorySettingsSummaryView: View {
 }
 
 private struct StreamingHistorySettingsStreamsView: View {
-    @EnvironmentObject var model: Model
+    let model: Model
+    @ObservedObject var database: StreamingHistoryDatabase
 
     private func formatStreamTitle(stream: StreamingHistoryStream) -> String {
         return "\(stream.startTime.formatted()), \(stream.duration().format())"
@@ -46,17 +43,17 @@ private struct StreamingHistorySettingsStreamsView: View {
         Form {
             Section {
                 List {
-                    ForEach(model.streamingHistory.database.streams) { stream in
+                    ForEach(database.streams) { stream in
                         NavigationLink {
                             StreamingHistoryStreamSettingsView(stream: stream)
                         } label: {
                             HStack {
                                 if stream.isSuccessful() {
                                     Image(systemName: "checkmark.circle")
-                                        .foregroundColor(.green)
+                                        .foregroundStyle(.green)
                                 } else {
                                     Image(systemName: "exclamationmark.circle")
-                                        .foregroundColor(.red)
+                                        .foregroundStyle(.red)
                                 }
                                 VStack(alignment: .leading) {
                                     Text(formatStreamTitle(stream: stream))
@@ -66,10 +63,10 @@ private struct StreamingHistorySettingsStreamsView: View {
                             }
                         }
                     }
-                    .onDelete(perform: { offsets in
-                        model.streamingHistory.database.streams.remove(atOffsets: offsets)
+                    .onDelete { offsets in
+                        database.streams.remove(atOffsets: offsets)
                         model.streamingHistory.store()
-                    })
+                    }
                 }
             }
         }
@@ -77,10 +74,12 @@ private struct StreamingHistorySettingsStreamsView: View {
 }
 
 struct StreamingHistorySettingsView: View {
+    let model: Model
+
     var body: some View {
         VStack {
-            StreamingHistorySettingsSummaryView()
-            StreamingHistorySettingsStreamsView()
+            StreamingHistorySettingsSummaryView(database: model.streamingHistory.database)
+            StreamingHistorySettingsStreamsView(model: model, database: model.streamingHistory.database)
         }
         .navigationTitle("Streaming history")
     }

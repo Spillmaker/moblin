@@ -1,3 +1,4 @@
+import NetworkExtension
 import SwiftUI
 
 private func rtmpStreamUrl(address: String, port: UInt16, streamKey: String) -> String {
@@ -62,10 +63,10 @@ private struct DjiDeviceSelectDeviceSettingsView: View {
                 )
             } label: {
                 Text(device.bluetoothPeripheralName ?? String(localized: "Select device"))
-                    .foregroundColor(.gray)
+                    .foregroundStyle(.gray)
                     .lineLimit(1)
             }
-            .disabled(model.isDjiDeviceStarted(device: device))
+            .disabled(device.isStarted)
         } header: {
             Text("Device")
         }
@@ -78,27 +79,45 @@ private struct DjiDeviceWiFiSettingsView: View {
 
     var body: some View {
         Section {
-            TextEditNavigationView(
-                title: String(localized: "SSID"),
-                value: device.wifiSsid,
-                onSubmit: { value in
-                    device.wifiSsid = value
-                }
-            )
-            .disabled(model.isDjiDeviceStarted(device: device))
-            TextEditNavigationView(
-                title: String(localized: "Password"),
-                value: device.wifiPassword,
-                onSubmit: { value in
-                    device.wifiPassword = value
-                },
-                sensitive: true
-            )
-            .disabled(model.isDjiDeviceStarted(device: device))
+            NavigationLink {
+                TextEditView(
+                    title: String(localized: "SSID"),
+                    value: device.wifiSsid,
+                    onSubmit: {
+                        device.wifiSsid = $0
+                    }
+                )
+            } label: {
+                TextItemView(name: String(localized: "SSID"), value: device.wifiSsid)
+            }
+            .disabled(device.isStarted)
+            NavigationLink {
+                TextEditView(
+                    title: String(localized: "Password"),
+                    value: device.wifiPassword,
+                    onSubmit: {
+                        device.wifiPassword = $0
+                    }
+                )
+            } label: {
+                TextItemView(
+                    name: String(localized: "Password"),
+                    value: device.wifiPassword,
+                    sensitive: true
+                )
+            }
+            .disabled(device.isStarted)
         } header: {
             Text("WiFi")
         } footer: {
             Text("The DJI device will connect to and stream RTMP over this WiFi.")
+        }
+        .onAppear {
+            NEHotspotNetwork.fetchCurrent(completionHandler: { network in
+                if device.wifiSsid.isEmpty, let network {
+                    device.wifiSsid = network.ssid
+                }
+            })
         }
     }
 }
@@ -106,28 +125,30 @@ private struct DjiDeviceWiFiSettingsView: View {
 private struct DjiDeviceRtmpSettingsView: View {
     @EnvironmentObject var model: Model
     @ObservedObject var device: SettingsDjiDevice
+    @ObservedObject var status: StatusOther
+    @ObservedObject var rtmpServer: SettingsRtmpServer
 
     private func serverUrls() -> [String] {
         guard let stream = model.getRtmpStream(id: device.serverRtmpStreamId) else {
             return []
         }
         var serverUrls: [String] = []
-        for status in model.ipStatuses.filter({ $0.ipType == .ipv4 }) {
+        for status in status.ipStatuses.filter({ $0.ipType == .ipv4 }) {
             serverUrls.append(rtmpStreamUrl(
                 address: status.ipType.formatAddress(status.ip),
-                port: model.database.rtmpServer.port,
+                port: rtmpServer.port,
                 streamKey: stream.streamKey
             ))
         }
         serverUrls.append(rtmpStreamUrl(
             address: personalHotspotLocalAddress,
-            port: model.database.rtmpServer.port,
+            port: rtmpServer.port,
             streamKey: stream.streamKey
         ))
-        for status in model.ipStatuses.filter({ $0.ipType == .ipv6 }) {
+        for status in status.ipStatuses.filter({ $0.ipType == .ipv6 }) {
             serverUrls.append(rtmpStreamUrl(
                 address: status.ipType.formatAddress(status.ip),
-                port: model.database.rtmpServer.port,
+                port: rtmpServer.port,
                 streamKey: stream.streamKey
             ))
         }
@@ -141,13 +162,13 @@ private struct DjiDeviceRtmpSettingsView: View {
                     Text($0.toString())
                 }
             }
-            .disabled(model.isDjiDeviceStarted(device: device))
+            .disabled(device.isStarted)
             if device.rtmpUrlType == .server {
-                if model.database.rtmpServer.streams.isEmpty {
+                if rtmpServer.streams.isEmpty {
                     Text("No RTMP server streams exists")
                 } else {
                     Picker("Stream", selection: $device.serverRtmpStreamId) {
-                        ForEach(model.database.rtmpServer.streams) { stream in
+                        ForEach(rtmpServer.streams) { stream in
                             Text(stream.name)
                                 .tag(stream.id)
                         }
@@ -155,15 +176,15 @@ private struct DjiDeviceRtmpSettingsView: View {
                     .onChange(of: device.serverRtmpStreamId) { _ in
                         device.serverRtmpUrl = serverUrls().first ?? ""
                     }
-                    .disabled(model.isDjiDeviceStarted(device: device))
+                    .disabled(device.isStarted)
                     Picker("URL", selection: $device.serverRtmpUrl) {
                         ForEach(serverUrls(), id: \.self) { serverUrl in
                             Text(serverUrl)
                                 .tag(serverUrl)
                         }
                     }
-                    .disabled(model.isDjiDeviceStarted(device: device))
-                    if !model.database.rtmpServer.enabled {
+                    .disabled(device.isStarted)
+                    if !rtmpServer.enabled {
                         Text("⚠️ The RTMP server is not enabled")
                     }
                 }
@@ -171,11 +192,11 @@ private struct DjiDeviceRtmpSettingsView: View {
                 TextEditNavigationView(
                     title: String(localized: "URL"),
                     value: device.customRtmpUrl,
-                    onSubmit: { value in
-                        device.customRtmpUrl = value
+                    onSubmit: {
+                        device.customRtmpUrl = $0
                     }
                 )
-                .disabled(model.isDjiDeviceStarted(device: device))
+                .disabled(device.isStarted)
             }
         } header: {
             Text("RTMP")
@@ -187,7 +208,7 @@ private struct DjiDeviceRtmpSettingsView: View {
             """)
         }
         .onAppear {
-            let streams = model.database.rtmpServer.streams
+            let streams = rtmpServer.streams
             if !streams.isEmpty {
                 if !streams.contains(where: { $0.id == device.serverRtmpStreamId }) {
                     device.serverRtmpStreamId = streams.first!.id
@@ -198,11 +219,7 @@ private struct DjiDeviceRtmpSettingsView: View {
             }
         }
         Section {
-            NavigationLink {
-                RtmpServerSettingsView(database: model.database)
-            } label: {
-                Text("RTMP server")
-            }
+            RtmpServerSettingsView(rtmpServer: rtmpServer)
         } header: {
             Text("Shortcut")
         }
@@ -220,20 +237,20 @@ private struct DjiDeviceSettingsSettingsView: View {
                     Text($0.rawValue)
                 }
             }
-            .disabled(model.isDjiDeviceStarted(device: device))
+            .disabled(device.isStarted)
             Picker("Bitrate", selection: $device.bitrate) {
                 ForEach(djiDeviceBitrates, id: \.self) {
                     Text(formatBytesPerSecond(speed: Int64($0)))
                 }
             }
-            .disabled(model.isDjiDeviceStarted(device: device))
-            if device.model == .osmoAction4 || device.model == .osmoAction5Pro {
+            .disabled(device.isStarted)
+            if device.model == .osmoAction4 || device.model == .osmoAction5Pro || device.model == .osmoAction6 {
                 Picker("Image stabilization", selection: $device.imageStabilization) {
                     ForEach(SettingsDjiDeviceImageStabilization.allCases, id: \.self) {
                         Text($0.toString())
                     }
                 }
-                .disabled(model.isDjiDeviceStarted(device: device))
+                .disabled(device.isStarted)
             }
             if device.model == .osmoPocket3 {
                 Picker("FPS", selection: $device.fps) {
@@ -241,7 +258,7 @@ private struct DjiDeviceSettingsSettingsView: View {
                         Text(String($0))
                     }
                 }
-                .disabled(model.isDjiDeviceStarted(device: device))
+                .disabled(device.isStarted)
             }
         } header: {
             Text("Settings")
@@ -268,35 +285,23 @@ private struct DjiDeviceAutoRestartSettingsView: View {
 
 private struct DjiDeviceStartStopButtonSettingsView: View {
     @EnvironmentObject var model: Model
-    var device: SettingsDjiDevice
+    @ObservedObject var device: SettingsDjiDevice
 
     var body: some View {
-        if !model.isDjiDeviceStarted(device: device) {
+        if !device.isStarted {
             Section {
-                Button {
+                TextButtonView("Start live stream") {
                     model.startDjiDeviceLiveStream(device: device)
-                } label: {
-                    HCenter {
-                        Text("Start live stream")
-                    }
                 }
             }
-            .listRowBackground(RoundedRectangle(cornerRadius: 10)
-                .foregroundColor(Color(uiColor: .secondarySystemGroupedBackground))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .stroke(.blue, lineWidth: 2)))
             .disabled(!device.canStartLive())
         } else {
             Section {
-                HCenter {
-                    Button {
-                        model.stopDjiDeviceLiveStream(device: device)
-                    } label: {
-                        Text("Stop live stream")
-                    }
+                TextButtonView("Stop live stream") {
+                    model.stopDjiDeviceLiveStream(device: device)
                 }
             }
-            .foregroundColor(.white)
+            .foregroundStyle(.white)
             .listRowBackground(Color.blue)
         }
     }
@@ -304,22 +309,22 @@ private struct DjiDeviceStartStopButtonSettingsView: View {
 
 struct DjiDeviceSettingsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var djiDevices: SettingsDjiDevices
     @ObservedObject var device: SettingsDjiDevice
+    @ObservedObject var status: StatusTopRight
 
     func state() -> String {
-        return formatDjiDeviceState(state: model.djiDeviceStreamingState)
+        return formatDjiDeviceState(state: status.djiDeviceStreamingState)
     }
 
     var body: some View {
         Form {
             Section {
-                TextEditNavigationView(title: "Name", value: device.name, onSubmit: {
-                    device.name = $0
-                })
+                NameEditView(name: $device.name, existingNames: djiDevices.devices)
             }
             DjiDeviceSelectDeviceSettingsView(device: device)
             DjiDeviceWiFiSettingsView(device: device)
-            DjiDeviceRtmpSettingsView(device: device)
+            DjiDeviceRtmpSettingsView(device: device, status: model.statusOther, rtmpServer: model.database.rtmpServer)
             DjiDeviceSettingsSettingsView(device: device)
             DjiDeviceAutoRestartSettingsView(device: device)
             Section {

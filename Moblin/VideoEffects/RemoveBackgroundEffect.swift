@@ -1,6 +1,5 @@
 import AVFoundation
 import CoreImage
-import MetalPetal
 import Vision
 
 private func makeFilter(fromHue: CGFloat, toHue: CGFloat) -> CIColorCubeWithColorSpace {
@@ -54,7 +53,7 @@ final class RemoveBackgroundEffect: VideoEffect {
             self.updating = true
             DispatchQueue.global().async {
                 let filter = makeFilter(fromHue: fromHue, toHue: toHue)
-                mixerLockQueue.async {
+                processorPipelineQueue.async {
                     self.filter = filter
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                         self.updating = false

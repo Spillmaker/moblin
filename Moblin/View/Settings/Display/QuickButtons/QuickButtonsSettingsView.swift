@@ -1,12 +1,13 @@
 import SwiftUI
 
-private struct AppearenceSettingsView: View {
-    @EnvironmentObject var model: Model
+private struct AppearanceSettingsView: View {
+    let model: Model
+    @ObservedObject var database: Database
     @ObservedObject var quickButtons: SettingsQuickButtons
 
     var body: some View {
         Section {
-            if model.database.showAllSettings {
+            if database.showAllSettings {
                 Toggle("Scroll", isOn: $quickButtons.enableScroll)
                     .onChange(of: quickButtons.enableScroll) { _ in
                         model.updateQuickButtonStates()
@@ -16,12 +17,16 @@ private struct AppearenceSettingsView: View {
                         model.updateQuickButtonStates()
                     }
             }
+            Toggle("Big buttons", isOn: $quickButtons.bigButtons)
+                .onChange(of: quickButtons.bigButtons) { _ in
+                    model.updateQuickButtonStates()
+                }
             Toggle("Show name", isOn: $quickButtons.showName)
                 .onChange(of: quickButtons.showName) { _ in
                     model.updateQuickButtonStates()
                 }
         } header: {
-            Text("Appearence")
+            Text("Appearance")
         } footer: {
             Text("Names are not shown in portrait mode.")
         }
@@ -31,19 +36,21 @@ private struct AppearenceSettingsView: View {
 private struct ButtonSettingsView: View {
     @EnvironmentObject var model: Model
     @ObservedObject var button: SettingsQuickButton
+    @ObservedObject var state: ButtonState
 
     private func label() -> some View {
         Toggle(isOn: $button.enabled) {
             HStack {
                 DraggableItemPrefixView()
                 IconAndTextView(
-                    image: button.systemImageNameOff,
+                    image: button.imageOff,
                     text: button.name,
                     longDivider: true
                 )
                 Spacer()
             }
         }
+        .disabled(state.isOn && button.enabled)
         .onChange(of: button.enabled) { _ in
             model.updateQuickButtonStates()
         }
@@ -52,7 +59,9 @@ private struct ButtonSettingsView: View {
     var body: some View {
         if model.database.showAllSettings {
             NavigationLink {
-                QuickButtonsButtonSettingsView(button: button, shortcut: false)
+                QuickButtonsButtonSettingsView(quickButtons: model.database.quickButtonsGeneral,
+                                               button: button,
+                                               shortcut: false)
             } label: {
                 label()
             }
@@ -63,19 +72,22 @@ private struct ButtonSettingsView: View {
 }
 
 private struct ButtonsSettingsView: View {
-    @EnvironmentObject var model: Model
+    let model: Model
+    @ObservedObject var database: Database
 
     var body: some View {
         Section {
             List {
-                ForEach(model.database.quickButtons) { button in
-                    ButtonSettingsView(button: button)
+                ForEach(database.quickButtons) { button in
+                    ButtonSettingsView(button: button,
+                                       state: model.getQuickButtonState(type: button.type)
+                                           ?? ButtonState(isOn: false, button: button))
                 }
-                .onMove(perform: { froms, to in
-                    model.database.quickButtons.move(fromOffsets: froms, toOffset: to)
+                .onMove { froms, to in
+                    database.quickButtons.move(fromOffsets: froms, toOffset: to)
                     model.updateQuickButtonStates()
                     model.sceneUpdated(updateRemoteScene: false)
-                })
+                }
             }
         } header: {
             Text("Quick buttons")
@@ -84,12 +96,14 @@ private struct ButtonsSettingsView: View {
 }
 
 struct QuickButtonsSettingsView: View {
-    @EnvironmentObject var model: Model
+    let model: Model
 
     var body: some View {
         Form {
-            AppearenceSettingsView(quickButtons: model.database.quickButtonsGeneral)
-            ButtonsSettingsView()
+            AppearanceSettingsView(model: model,
+                                   database: model.database,
+                                   quickButtons: model.database.quickButtonsGeneral)
+            ButtonsSettingsView(model: model, database: model.database)
         }
         .navigationTitle("Quick buttons")
     }

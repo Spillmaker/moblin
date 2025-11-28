@@ -9,17 +9,20 @@ struct DeepLinkCreatorStreamsSettingsView: View {
             Section {
                 List {
                     ForEach(deepLinkCreator.streams) { stream in
-                        DeepLinkCreatorStreamSettingsView(stream: stream)
+                        DeepLinkCreatorStreamSettingsView(deepLinkCreator: deepLinkCreator, stream: stream)
                     }
-                    .onMove(perform: { froms, to in
+                    .onMove { froms, to in
                         deepLinkCreator.streams.move(fromOffsets: froms, toOffset: to)
-                    })
-                    .onDelete(perform: { offsets in
+                    }
+                    .onDelete { offsets in
                         deepLinkCreator.streams.remove(atOffsets: offsets)
-                    })
+                    }
                 }
                 CreateButtonView {
-                    deepLinkCreator.streams.append(DeepLinkCreatorStream())
+                    let stream = DeepLinkCreatorStream()
+                    stream.name = makeUniqueName(name: DeepLinkCreatorStream.baseName,
+                                                 existingNames: deepLinkCreator.streams)
+                    deepLinkCreator.streams.append(stream)
                 }
             }
         }

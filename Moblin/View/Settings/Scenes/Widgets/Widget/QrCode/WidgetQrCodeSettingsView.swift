@@ -3,7 +3,7 @@ import SwiftUI
 
 struct WidgetQrCodeSettingsView: View {
     @EnvironmentObject var model: Model
-    var widget: SettingsWidget
+    let widget: SettingsWidget
 
     private func submitMessage(value: String) {
         widget.qrCode.message = value
@@ -18,5 +18,6 @@ struct WidgetQrCodeSettingsView: View {
                 onSubmit: submitMessage
             )
         }
+        WidgetEffectsView(widget: widget)
     }
 }

@@ -2,13 +2,13 @@ import SwiftUI
 
 struct WidgetMapSettingsView: View {
     @EnvironmentObject var model: Model
-    var widget: SettingsWidget
+    let widget: SettingsWidget
     @State var delay: Double
 
     var body: some View {
         Section {
             Toggle(isOn: Binding(get: {
-                widget.map.northUp!
+                widget.map.northUp
             }, set: { value in
                 widget.map.northUp = value
                 model.resetSelectedScene(changeScene: false)
@@ -20,7 +20,9 @@ struct WidgetMapSettingsView: View {
         }
         Section {
             NavigationLink {
-                LocationSettingsView()
+                LocationSettingsView(database: model.database,
+                                     location: model.database.location,
+                                     stream: $model.stream)
             } label: {
                 Label("Location", systemImage: "location")
             }
@@ -33,6 +35,9 @@ struct WidgetMapSettingsView: View {
                     value: $delay,
                     in: 0 ... 10,
                     step: 0.5,
+                    label: {
+                        EmptyView()
+                    },
                     onEditingChanged: { begin in
                         guard !begin else {
                             return

@@ -3,26 +3,26 @@ import Foundation
 
 extension Model {
     func stopSrtlaServer() {
-        srtlaServer?.stop()
-        srtlaServer = nil
+        ingests.srtla?.stop()
+        ingests.srtla = nil
     }
 
     func reloadSrtlaServer() {
         stopSrtlaServer()
         if database.srtlaServer.enabled {
-            srtlaServer = SrtlaServer(settings: database.srtlaServer, timecodesEnabled: isTimecodesEnabled())
-            srtlaServer!.delegate = self
-            srtlaServer!.start()
+            ingests.srtla = SrtlaServer(settings: database.srtlaServer, timecodesEnabled: isTimecodesEnabled())
+            ingests.srtla?.delegate = self
+            ingests.srtla?.start()
         }
     }
 
     func srtlaServerEnabled() -> Bool {
-        return srtlaServer != nil
+        return database.srtlaServer.enabled
     }
 
-    func srtlaCameras() -> [String] {
+    func srtlaCameras() -> [(UUID, String)] {
         return database.srtlaServer.streams.map { stream in
-            stream.camera()
+            (stream.id, stream.camera())
         }
     }
 
@@ -32,9 +32,9 @@ extension Model {
         }
     }
 
-    func getSrtlaStream(camera: String) -> SettingsSrtlaServerStream? {
+    func getSrtlaStream(idString: String) -> SettingsSrtlaServerStream? {
         return database.srtlaServer.streams.first { stream in
-            camera == stream.camera()
+            idString == stream.id.uuidString
         }
     }
 
@@ -45,44 +45,40 @@ extension Model {
     }
 
     func isSrtlaStreamConnected(streamId: String) -> Bool {
-        return srtlaServer?.isStreamConnected(streamId: streamId) ?? false
+        return ingests.srtla?.isStreamConnected(streamId: streamId) ?? false
     }
 }
 
 extension Model: SrtlaServerDelegate {
     func srtlaServerOnClientStart(streamId: String, latency _: Double) {
         DispatchQueue.main.async {
-            let camera = self.getSrtlaStream(streamId: streamId)?.camera() ?? srtlaCamera(name: "Unknown")
-            self.makeToast(title: String(localized: "\(camera) connected"))
-            guard let stream = self.getSrtlaStream(streamId: streamId) else {
-                return
-            }
-            let name = "SRTLA \(camera)"
-            let latency = srtServerClientLatency
-            self.media.addBufferedVideo(cameraId: stream.id, name: name, latency: latency)
-            self.media.addBufferedAudio(cameraId: stream.id, name: name, latency: latency)
-            if stream.autoSelectMic! {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                    self.selectMicById(id: "\(stream.id) 0")
-                }
-            }
+            self.srtlaServerOnClientStartInternal(streamId: streamId)
         }
     }
 
     func srtlaServerOnClientStop(streamId: String) {
         DispatchQueue.main.async {
-            let camera = self.getSrtlaStream(streamId: streamId)?.camera() ?? srtlaCamera(name: "Unknown")
-            self.makeToast(title: String(localized: "\(camera) disconnected"))
-            guard let stream = self.getSrtlaStream(streamId: streamId) else {
-                return
-            }
-            self.media.removeBufferedVideo(cameraId: stream.id)
-            self.media.removeBufferedAudio(cameraId: stream.id)
-            if self.currentMic.id == "\(stream.id) 0" {
-                self.setMicFromSettings()
-            }
-            self.updateAutoSceneSwitcherVideoSourceDisconnected()
+            self.srtlaServerOnClientStopInternal(streamId: streamId)
         }
+    }
+
+    private func srtlaServerOnClientStartInternal(streamId: String) {
+        guard let stream = getSrtlaStream(streamId: streamId) else {
+            return
+        }
+        let camera = stream.camera()
+        makeToast(title: String(localized: "\(camera) connected"))
+        media.addBufferedVideo(cameraId: stream.id, name: camera, latency: srtServerClientLatency)
+        media.addBufferedAudio(cameraId: stream.id, name: camera, latency: srtServerClientLatency)
+    }
+
+    private func srtlaServerOnClientStopInternal(streamId: String) {
+        guard let stream = getSrtlaStream(streamId: streamId) else {
+            return
+        }
+        makeToast(title: String(localized: "\(stream.camera()) disconnected"))
+        media.removeBufferedVideo(cameraId: stream.id)
+        media.removeBufferedAudio(cameraId: stream.id)
     }
 
     func srtlaServerOnAudioBuffer(streamId: String, sampleBuffer: CMSampleBuffer) {

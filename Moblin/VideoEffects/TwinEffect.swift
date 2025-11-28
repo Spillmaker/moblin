@@ -1,5 +1,5 @@
 import AVFoundation
-import MetalPetal
+import CoreImage
 import Vision
 
 final class TwinEffect: VideoEffect {
@@ -19,22 +19,12 @@ final class TwinEffect: VideoEffect {
             width: width,
             height: height
         ))
-        let leftImage = centerImage.transformed(by: CGAffineTransform(
-            translationX: -width / 2,
-            y: 0
-        ))
+        let leftImage = centerImage.translated(x: -width / 2, y: 0)
         let rightImage = centerImage
-            .transformed(by: CGAffineTransform(scaleX: -1, y: 1))
-            .transformed(by: CGAffineTransform(
-                translationX: 5 * width / 2,
-                y: 0
-            ))
+            .scaled(x: -1, y: 1)
+            .translated(x: 5 * width / 2, y: 0)
         filter.inputImage = rightImage
         filter.backgroundImage = leftImage
         return filter.outputImage ?? image
-    }
-
-    override func executeMetalPetal(_ image: MTIImage?, _: VideoEffectInfo) -> MTIImage? {
-        return image
     }
 }

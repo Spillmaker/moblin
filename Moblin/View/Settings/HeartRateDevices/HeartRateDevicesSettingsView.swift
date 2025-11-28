@@ -1,20 +1,8 @@
 import SwiftUI
 
-private struct HeartRateDeviceSettingsWrapperView: View {
-    var device: SettingsHeartRateDevice
-    @State var name: String
-
-    var body: some View {
-        NavigationLink {
-            HeartRateDeviceSettingsView(device: device, name: $name)
-        } label: {
-            Text(name)
-        }
-    }
-}
-
 struct HeartRateDevicesSettingsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var heartRateDevices: SettingsHeartRateDevices
 
     var body: some View {
         Form {
@@ -30,18 +18,21 @@ struct HeartRateDevicesSettingsView: View {
             }
             Section {
                 List {
-                    ForEach(model.database.heartRateDevices.devices) { device in
-                        HeartRateDeviceSettingsWrapperView(device: device, name: device.name)
+                    ForEach(heartRateDevices.devices) { device in
+                        HeartRateDeviceSettingsView(model: model,
+                                                    heartRateDevices: heartRateDevices,
+                                                    device: device,
+                                                    status: model.statusTopRight)
                     }
-                    .onDelete(perform: { offsets in
-                        model.database.heartRateDevices.devices.remove(atOffsets: offsets)
-                    })
+                    .onDelete { offsets in
+                        heartRateDevices.devices.remove(atOffsets: offsets)
+                    }
                 }
                 CreateButtonView {
                     let device = SettingsHeartRateDevice()
-                    device.name = "My device"
-                    model.database.heartRateDevices.devices.append(device)
-                    model.objectWillChange.send()
+                    device.name = makeUniqueName(name: SettingsHeartRateDevice.baseName,
+                                                 existingNames: heartRateDevices.devices)
+                    heartRateDevices.devices.append(device)
                 }
             } footer: {
                 SwipeLeftToDeleteHelpView(kind: String(localized: "a device"))

@@ -32,78 +32,75 @@ class ByteWriter {
         }
     }
 
-    @discardableResult
-    func writeUInt8(_ value: UInt8) -> Self {
-        writeBytes(value.data)
+    func writeUInt8(_ value: UInt8) {
+        if position == data.count {
+            data.append(value)
+            position += 1
+        } else {
+            writeBytes(value.data)
+        }
     }
 
-    @discardableResult
-    func writeUInt16(_ value: UInt16) -> Self {
-        writeBytes(value.bigEndian.data)
-    }
-
-    @discardableResult
-    func writeUInt16Le(_ value: UInt16) -> Self {
+    func writeUInt16(_ value: UInt16) {
+        writeUInt8(UInt8((value >> 8) & 0xFF))
         writeUInt8(UInt8(value & 0xFF))
-        return writeUInt8(UInt8((value >> 8) & 0xFF))
     }
 
-    @discardableResult
-    func writeUInt24(_ value: UInt32) -> Self {
+    func writeUInt16Le(_ value: UInt16) {
+        writeUInt8(UInt8(value & 0xFF))
+        writeUInt8(UInt8((value >> 8) & 0xFF))
+    }
+
+    func writeUInt24(_ value: UInt32) {
         writeUInt8(UInt8((value >> 16) & 0xFF))
         writeUInt8(UInt8((value >> 8) & 0xFF))
-        return writeUInt8(UInt8(value & 0xFF))
-    }
-
-    @discardableResult
-    func writeUInt24Le(_ value: UInt32) -> Self {
         writeUInt8(UInt8(value & 0xFF))
-        writeUInt8(UInt8((value >> 8) & 0xFF))
-        return writeUInt8(UInt8((value >> 16) & 0xFF))
     }
 
-    @discardableResult
-    func writeUInt32(_ value: UInt32) -> Self {
-        writeBytes(value.bigEndian.data)
-    }
-
-    @discardableResult
-    func writeUInt32Le(_ value: UInt32) -> Self {
+    func writeUInt24Le(_ value: UInt32) {
         writeUInt8(UInt8(value & 0xFF))
         writeUInt8(UInt8((value >> 8) & 0xFF))
         writeUInt8(UInt8((value >> 16) & 0xFF))
-        return writeUInt8(UInt8((value >> 24) & 0xFF))
     }
 
-    @discardableResult
-    func writeInt32(_ value: Int32) -> Self {
+    func writeUInt32(_ value: UInt32) {
+        writeUInt8(UInt8((value >> 24) & 0xFF))
+        writeUInt8(UInt8((value >> 16) & 0xFF))
+        writeUInt8(UInt8((value >> 8) & 0xFF))
+        writeUInt8(UInt8(value & 0xFF))
+    }
+
+    func writeUInt32Le(_ value: UInt32) {
+        writeUInt8(UInt8(value & 0xFF))
+        writeUInt8(UInt8((value >> 8) & 0xFF))
+        writeUInt8(UInt8((value >> 16) & 0xFF))
+        writeUInt8(UInt8((value >> 24) & 0xFF))
+    }
+
+    func writeInt32(_ value: Int32) {
         writeBytes(value.bigEndian.data)
     }
 
-    @discardableResult
-    func writeDouble(_ value: Double) -> Self {
+    func writeDouble(_ value: Double) {
         writeBytes(Data(value.data.reversed()))
     }
 
-    @discardableResult
-    func writeUTF8Bytes(_ value: String) -> Self {
+    func writeUTF8Bytes(_ value: String) {
         writeBytes(Data(value.utf8))
     }
 
-    @discardableResult
-    func writeBytes(_ value: Data) -> Self {
+    func writeBytes(_ value: Data) {
         if position == data.count {
             data.append(value)
             position = data.count
-            return self
+        } else {
+            let length = min(data.count, value.count)
+            data[position ..< position + length] = value[0 ..< length]
+            if length == data.count {
+                data.append(value[length ..< value.count])
+            }
+            position += value.count
         }
-        let length = min(data.count, value.count)
-        data[position ..< position + length] = value[0 ..< length]
-        if length == data.count {
-            data.append(value[length ..< value.count])
-        }
-        position += value.count
-        return self
     }
 
     func sequence(_ length: Int, lambda: (ByteWriter) -> Void) {

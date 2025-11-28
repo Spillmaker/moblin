@@ -16,18 +16,17 @@ private func formatCatPrinterState(state: CatPrinterState?) -> String {
 
 struct CatPrinterSettingsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var catPrinters: SettingsCatPrinters
     @ObservedObject private var scanner = catPrinterScanner
     @ObservedObject var device: SettingsCatPrinter
+    @ObservedObject var status: StatusTopRight
 
-    func state() -> String {
-        return formatCatPrinterState(state: model.catPrinterState)
+    private func state() -> String {
+        return formatCatPrinterState(state: status.catPrinterState)
     }
 
     private func canEnable() -> Bool {
-        if device.bluetoothPeripheralId == nil {
-            return false
-        }
-        return true
+        return device.bluetoothPeripheralId != nil
     }
 
     private func onDeviceChange(value: String) {
@@ -44,9 +43,7 @@ struct CatPrinterSettingsView: View {
     var body: some View {
         Form {
             Section {
-                TextEditNavigationView(title: "Name", value: device.name, onSubmit: {
-                    device.name = $0
-                })
+                NameEditView(name: $device.name, existingNames: catPrinters.devices)
             }
             Section {
                 NavigationLink {
@@ -56,7 +53,7 @@ struct CatPrinterSettingsView: View {
                     )
                 } label: {
                     Text(device.bluetoothPeripheralName ?? String(localized: "Select device"))
-                        .foregroundColor(.gray)
+                        .foregroundStyle(.gray)
                         .lineLimit(1)
                 }
                 .disabled(model.isCatPrinterEnabled(device: device))
@@ -80,10 +77,27 @@ struct CatPrinterSettingsView: View {
                 Toggle(isOn: $device.printChat) {
                     Text("Print chat")
                 }
-            }
-            Section {
                 Toggle(isOn: $device.printSnapshots) {
                     Text("Print snapshots")
+                }
+                NavigationLink {
+                    Form {
+                        NavigationLink {
+                            TwitchAlertsSettingsView(title: String(localized: "Twitch"), alerts: device.printTwitch)
+                        } label: {
+                            TwitchLogoAndNameView()
+                        }
+                        NavigationLink {
+                            KickAlertsSettingsView(title: String(localized: "Kick"),
+                                                   alerts: device.printKick,
+                                                   showBans: false)
+                        } label: {
+                            KickLogoAndNameView()
+                        }
+                    }
+                    .navigationTitle("Print alerts")
+                } label: {
+                    Text("Print alerts")
                 }
             }
             Section {
@@ -101,14 +115,8 @@ struct CatPrinterSettingsView: View {
                     }
                 }
                 Section {
-                    Button {
+                    TextButtonView("Test") {
                         model.catPrinterPrintTestImage(device: device)
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Text("Test")
-                            Spacer()
-                        }
                     }
                 }
             }

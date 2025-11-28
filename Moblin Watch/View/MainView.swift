@@ -5,14 +5,14 @@ struct MainView: View {
 
     var body: some View {
         TabView {
-            PreviewView()
+            PreviewView(preview: model.preview)
             if !model.viaRemoteControl {
-                ChatView()
+                ChatView(chatSettings: model.settings.chat, chat: model.chat)
             }
-            if model.showPadelScoreBoard && !model.viaRemoteControl {
-                PadelScoreboardView()
+            if model.scoreboardType != nil && !model.viaRemoteControl {
+                ScoreboardView()
             }
-            ControlView()
+            ControlView(preview: model.preview)
         }
         .onAppear {
             model.setup()

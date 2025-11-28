@@ -12,6 +12,7 @@ struct MpegTsAudioConfig: Equatable {
         case twinqVQ = 7
         case celp = 8
         case hvxc = 9
+        case opus = 10
 
         init(objectID: MPEG4ObjectID) {
             switch objectID {
@@ -135,18 +136,11 @@ struct MpegTsAudioConfig: Equatable {
     let channel: ChannelConfiguration
     let frameLengthFlag = false
 
-    var bytes: [UInt8] {
-        var bytes = [UInt8](repeating: 0, count: 2)
-        bytes[0] = type.rawValue << 3 | (frequency.rawValue >> 1)
-        bytes[1] = (frequency.rawValue & 0x1) << 7 | (channel.rawValue & 0xF) << 3
-        return bytes
-    }
-
-    init?(bytes: [UInt8]) {
+    init?(data: [UInt8]) {
         guard
-            let type = AudioObjectType(rawValue: bytes[0] >> 3),
-            let frequency = SamplingFrequency(rawValue: (bytes[0] & 0b0000_0111) << 1 | (bytes[1] >> 7)),
-            let channel = ChannelConfiguration(rawValue: (bytes[1] & 0b0111_1000) >> 3)
+            let type = AudioObjectType(rawValue: data[0] >> 3),
+            let frequency = SamplingFrequency(rawValue: (data[0] & 0b0000_0111) << 1 | (data[1] >> 7)),
+            let channel = ChannelConfiguration(rawValue: (data[1] & 0b0111_1000) >> 3)
         else {
             return nil
         }
@@ -157,23 +151,21 @@ struct MpegTsAudioConfig: Equatable {
 
     init(formatDescription: CMFormatDescription) {
         let streamBasicDescription = formatDescription.audioStreamBasicDescription!
-        type = AudioObjectType(objectID: MPEG4ObjectID(rawValue: Int(streamBasicDescription.mFormatFlags))!)
+        switch streamBasicDescription.mFormatID {
+        case kAudioFormatOpus:
+            type = .opus
+        default:
+            type = AudioObjectType(objectID: MPEG4ObjectID(rawValue: Int(streamBasicDescription.mFormatFlags))!)
+        }
         frequency = SamplingFrequency(sampleRate: streamBasicDescription.mSampleRate)
         channel = ChannelConfiguration(rawValue: UInt8(streamBasicDescription.mChannelsPerFrame))!
     }
 
-    func makeHeader(_ length: Int) -> [UInt8] {
-        let size = 7
-        let fullSize = size + length
-        var adts = [UInt8](repeating: 0x00, count: size)
-        adts[0] = 0xFF
-        adts[1] = 0xF9
-        adts[2] = (type.rawValue - 1) << 6 | (frequency.rawValue << 2) | (channel.rawValue >> 2)
-        adts[3] = (channel.rawValue & 3) << 6 | UInt8(fullSize >> 11)
-        adts[4] = UInt8((fullSize & 0x7FF) >> 3)
-        adts[5] = (UInt8(fullSize & 7) << 5) + 0x1F
-        adts[6] = 0xFC
-        return adts
+    func encode() -> Data {
+        var data = Data(count: 2)
+        data[0] = type.rawValue << 3 | (frequency.rawValue >> 1)
+        data[1] = (frequency.rawValue & 0x1) << 7 | (channel.rawValue & 0xF) << 3
+        return data
     }
 
     func audioStreamBasicDescription() -> AudioStreamBasicDescription {

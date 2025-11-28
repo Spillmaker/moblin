@@ -1,23 +1,92 @@
 import SwiftUI
 
 private struct VideoStabilizationView: View {
-    @EnvironmentObject var model: Model
-    var scene: SettingsScene
-    @State var mode: SettingsVideoStabilizationMode
+    let model: Model
+    @ObservedObject var scene: SettingsScene
 
     var body: some View {
-        HStack {
-            Text("Video stabilization")
-            Spacer()
-            Picker("", selection: $mode) {
-                ForEach(videoStabilizationModes, id: \.self) {
-                    Text($0.toString())
-                        .tag($0)
-                }
+        Picker("Video stabilization", selection: $scene.videoStabilizationMode) {
+            ForEach(videoStabilizationModes, id: \.self) {
+                Text($0.toString())
+                    .tag($0)
             }
-            .onChange(of: mode) {
-                scene.videoStabilizationMode = $0
-                model.sceneUpdated(attachCamera: true, updateRemoteScene: false)
+        }
+        .onChange(of: scene.videoStabilizationMode) { _ in
+            model.sceneUpdated(attachCamera: true, updateRemoteScene: false)
+        }
+    }
+}
+
+private struct MicView: View {
+    let model: Model
+    @ObservedObject var scene: SettingsScene
+    @ObservedObject var mic: Mic
+
+    private func onMicChange(micId: String) {
+        scene.micId = micId
+        if model.getSelectedScene() === scene {
+            model.switchMicIfNeededAfterSceneSwitch()
+        }
+    }
+
+    var body: some View {
+        NavigationLink {
+            InlinePickerView(
+                title: String(localized: "Mic"),
+                onChange: onMicChange,
+                items: model.database.mics.mics.map {
+                    InlinePickerItem(id: $0.id, text: $0.name)
+                },
+                selectedId: scene.micId
+            )
+        } label: {
+            HStack {
+                Text("Mic")
+                Spacer()
+                Text(model.getMicById(id: scene.micId)?.name ?? "Unknown 😢")
+                    .foregroundStyle(.gray)
+                    .lineLimit(1)
+            }
+        }
+        .onAppear {
+            if scene.micId.isEmpty {
+                scene.micId = mic.current.id
+            }
+        }
+    }
+}
+
+private struct SceneWidgetView: View {
+    @EnvironmentObject var model: Model
+    @ObservedObject var database: Database
+    let sceneWidget: SettingsSceneWidget
+
+    var body: some View {
+        if let widget = database.widgets.first(where: { $0.id == sceneWidget.widgetId }) {
+            NavigationLink {
+                SceneWidgetSettingsView(
+                    model: model,
+                    database: database,
+                    sceneWidget: sceneWidget,
+                    widget: widget
+                )
+            } label: {
+                Toggle(isOn: Binding(get: {
+                    widget.enabled
+                }, set: { value in
+                    widget.enabled = value
+                    model.sceneUpdated(attachCamera: model.isCaptureDeviceWidget(widget: widget))
+                })) {
+                    HStack {
+                        DraggableItemPrefixView()
+                        HStack {
+                            Text("")
+                            Image(systemName: widget.image())
+                            Text(widget.name)
+                        }
+                        Spacer()
+                    }
+                }
             }
         }
     }
@@ -25,63 +94,26 @@ private struct VideoStabilizationView: View {
 
 struct SceneSettingsView: View {
     @EnvironmentObject var model: Model
-    @State private var showingAddWidget = false
-    @State private var expandedWidget: SettingsSceneWidget?
+    @ObservedObject var database: Database
     @ObservedObject var scene: SettingsScene
-    @State var selectedRotation: Double
-    @State var numericInput: Bool
+    @State private var showingAddWidget = false
+    @State private var showingScreenCaptureAlert = false
 
     var widgets: [SettingsWidget] {
         model.database.widgets
     }
 
-    private func createSceneWidget(widget: SettingsWidget) -> SettingsSceneWidget {
-        let sceneWidget = SettingsSceneWidget(widgetId: widget.id)
-        switch widget.type {
-        case .text:
-            sceneWidget.x = 0
-            sceneWidget.y = 0
-            sceneWidget.width = 8
-            sceneWidget.height = 5
-        case .image:
-            sceneWidget.width = 30
-            sceneWidget.height = 40
-        case .map:
-            sceneWidget.width = 13
-            sceneWidget.height = 23
-        case .videoSource:
-            sceneWidget.x = 72
-            sceneWidget.y = 72
-            sceneWidget.width = 28
-            sceneWidget.height = 28
-        case .vTuber:
-            sceneWidget.x = 80
-            sceneWidget.y = 60
-            sceneWidget.width = 28
-            sceneWidget.height = 28
-        case .pngTuber:
-            sceneWidget.x = 85
-            sceneWidget.y = 72
-            sceneWidget.width = 28
-            sceneWidget.height = 28
-        default:
-            break
-        }
-        return sceneWidget
-    }
-
     private func onCameraChange(cameraId: String) {
         scene.updateCameraId(settingsCameraId: model.cameraIdToSettingsCameraId(cameraId: cameraId))
         model.sceneUpdated(attachCamera: true, updateRemoteScene: false)
+        if model.isScreenCaptureCamera(cameraId: cameraId) {
+            showingScreenCaptureAlert = true
+        }
     }
 
     var body: some View {
         Form {
-            NavigationLink {
-                NameEditView(name: $scene.name)
-            } label: {
-                TextItemView(name: String(localized: "Name"), value: scene.name)
-            }
+            NameEditView(name: $scene.name, existingNames: database.scenes)
             Section {
                 NavigationLink {
                     InlinePickerView(
@@ -105,94 +137,90 @@ struct SceneSettingsView: View {
                         selectedId: model.getCameraPositionId(scene: scene)
                     )
                 } label: {
-                    HStack {
-                        Text("Name")
-                        Spacer()
-                        if !model.isSceneVideoSourceActive(scene: scene) {
-                            Image(systemName: "cable.connector.slash")
+                    Label {
+                        HStack {
+                            Text("Name")
+                            Spacer()
+                            if !model.isSceneVideoSourceActive(scene: scene) {
+                                Image(systemName: "cable.connector.slash")
+                            }
+                            Text(model.getCameraPositionName(scene: scene))
+                                .foregroundStyle(.gray)
+                                .lineLimit(1)
                         }
-                        Text(model.getCameraPositionName(scene: scene))
-                            .foregroundColor(.gray)
-                            .lineLimit(1)
+                    } icon: {
+                        Image(systemName: "camera")
                     }
                 }
-                VideoSourceRotationView(selectedRotation: $selectedRotation)
-                    .onChange(of: selectedRotation) { rotation in
-                        scene.videoSourceRotation = rotation
-                        model.sceneUpdated(updateRemoteScene: false)
+                .alert(
+                    """
+                    Start a screen capture by long-pressing the record button in iOS Control Center and select Moblin.
+                    """,
+                    isPresented: $showingScreenCaptureAlert
+                ) {
+                    Button("Got it") {
+                        showingScreenCaptureAlert = false
                     }
-                Toggle(isOn: Binding(get: {
-                    scene.overrideVideoStabilizationMode
-                }, set: { value in
-                    scene.overrideVideoStabilizationMode = value
-                    model.sceneUpdated(attachCamera: true, updateRemoteScene: false)
-                })) {
-                    Text("Override video stabilization")
                 }
-                if scene.overrideVideoStabilizationMode {
-                    VideoStabilizationView(scene: scene, mode: scene.videoStabilizationMode)
-                }
-                Toggle(isOn: Binding(get: {
-                    scene.fillFrame
-                }, set: { value in
-                    scene.fillFrame = value
-                    model.sceneUpdated(attachCamera: true, updateRemoteScene: false)
-                })) {
-                    Text("Fill frame")
+                if database.showAllSettings {
+                    if scene.videoSource.cameraPosition != .none {
+                        VideoSourceRotationView(selectedRotation: $scene.videoSourceRotation)
+                            .onChange(of: scene.videoSourceRotation) { _ in
+                                model.sceneUpdated(updateRemoteScene: false)
+                            }
+                    }
+                    Toggle("Override video stabilization", isOn: $scene.overrideVideoStabilizationMode)
+                        .onChange(of: scene.overrideVideoStabilizationMode) { _ in
+                            model.sceneUpdated(attachCamera: true, updateRemoteScene: false)
+                        }
+                    if scene.overrideVideoStabilizationMode {
+                        VideoStabilizationView(model: model, scene: scene)
+                    }
+                    if scene.videoSource.cameraPosition != .none {
+                        Toggle("Fill frame", isOn: $scene.fillFrame)
+                            .onChange(of: scene.fillFrame) { _ in
+                                model.sceneUpdated(attachCamera: true, updateRemoteScene: false)
+                            }
+                    }
                 }
             } header: {
                 Text("Video source")
             } footer: {
-                Text("""
-                Enable Override video stabilization to override Settings → Camera → Video \
-                stabilization in this scene.
-                """)
+                if database.showAllSettings {
+                    Text("""
+                    Enable Override video stabilization to override Settings → Camera → Video \
+                    stabilization in this scene.
+                    """)
+                }
+            }
+            if database.showAllSettings {
+                Section {
+                    Toggle("Override", isOn: $scene.overrideMic)
+                        .onChange(of: scene.overrideMic) { _ in
+                            model.switchMicIfNeededAfterSceneSwitch()
+                        }
+                    if scene.overrideMic {
+                        MicView(model: model, scene: scene, mic: model.mic)
+                    }
+                } header: {
+                    Text("Mic")
+                } footer: {
+                    Text("""
+                    Enable Override to automatically switch to selected mic (if available) when \
+                    switching to this scene.
+                    """)
+                }
             }
             Section {
                 List {
                     ForEach(scene.widgets) { sceneWidget in
-                        if let widget = widgets.first(where: { item in item.id == sceneWidget.widgetId }) {
-                            NavigationLink {
-                                SceneWidgetSettingsView(
-                                    sceneWidget: sceneWidget,
-                                    widget: widget,
-                                    numericInput: $numericInput,
-                                    x: sceneWidget.x,
-                                    y: sceneWidget.y,
-                                    width: sceneWidget.width,
-                                    height: sceneWidget.height,
-                                    xString: String(sceneWidget.x),
-                                    yString: String(sceneWidget.y),
-                                    widthString: String(sceneWidget.width),
-                                    heightString: String(sceneWidget.height)
-                                )
-                            } label: {
-                                Toggle(isOn: Binding(get: {
-                                    widget.enabled
-                                }, set: { value in
-                                    widget.enabled = value
-                                    model
-                                        .sceneUpdated(attachCamera: model
-                                            .isCaptureDeviceWidget(widget: widget))
-                                })) {
-                                    HStack {
-                                        DraggableItemPrefixView()
-                                        HStack {
-                                            Text("")
-                                            Image(systemName: widgetImage(widget: widget))
-                                            Text(widget.name)
-                                        }
-                                        Spacer()
-                                    }
-                                }
-                            }
-                        }
+                        SceneWidgetView(database: database, sceneWidget: sceneWidget)
                     }
-                    .onMove(perform: { froms, to in
+                    .onMove { froms, to in
                         scene.widgets.move(fromOffsets: froms, toOffset: to)
                         model.sceneUpdated()
-                    })
-                    .onDelete(perform: { offsets in
+                    }
+                    .onDelete { offsets in
                         var attachCamera = false
                         if scene.id == model.getSelectedScene()?.id {
                             for offset in offsets {
@@ -203,7 +231,7 @@ struct SceneSettingsView: View {
                         }
                         scene.widgets.remove(atOffsets: offsets)
                         model.sceneUpdated(attachCamera: attachCamera)
-                    })
+                    }
                 }
                 AddButtonView(action: {
                     showingAddWidget = true
@@ -218,7 +246,7 @@ struct SceneSettingsView: View {
                                 } label: {
                                     Text("Cancel")
                                         .padding(5)
-                                        .foregroundColor(.blue)
+                                        .foregroundStyle(.blue)
                                 }
                             }
                         }
@@ -231,20 +259,11 @@ struct SceneSettingsView: View {
                                 Section("Widget name") {
                                     ForEach(widgets) { widget in
                                         Button {
-                                            scene.widgets.append(createSceneWidget(widget: widget))
-                                            var attachCamera = false
-                                            if scene.id == model.getSelectedScene()?.id {
-                                                attachCamera = model.isCaptureDeviceWidget(widget: widget)
-                                            }
-                                            model.sceneUpdated(
-                                                imageEffectChanged: true,
-                                                attachCamera: attachCamera
-                                            )
-                                            model.objectWillChange.send()
+                                            model.appendWidgetToScene(scene: scene, widget: widget)
                                             showingAddWidget = false
                                         } label: {
                                             IconAndTextView(
-                                                image: widgetImage(widget: widget),
+                                                image: widget.image(),
                                                 text: widget.name,
                                                 longDivider: true
                                             )

@@ -1,5 +1,4 @@
 import AVFoundation
-import Foundation
 
 private let supportedProtocols = ["rtmp", "rtmps", "rtmpt", "rtmpts"]
 
@@ -28,16 +27,24 @@ enum RtmpConnectionCode: String {
     }
 }
 
-class RtmpConnection: RtmpEventDispatcher {
+class RtmpStreamWeak {
+    weak var stream: RtmpStream?
+
+    init(stream: RtmpStream) {
+        self.stream = stream
+    }
+}
+
+class RtmpConnection {
     private var uri: URL?
     private(set) var connected = false
-    var socket: RtmpSocket!
-    var streams: [RtmpStream] = []
+    private(set) var socket: RtmpSocket
+    weak var stream: RtmpStream?
     private var chunkStreamIdToStreamId: [UInt16: UInt32] = [:]
     var callCompletions: [Int: ([Any?]) -> Void] = [:]
     var windowSizeFromServer: Int64 = 250_000 {
         didSet {
-            guard socket.connected else {
+            guard socket.connected == true else {
                 return
             }
             _ = socket.write(chunk: RtmpChunk(
@@ -49,32 +56,78 @@ class RtmpConnection: RtmpEventDispatcher {
     }
 
     private var nextTransactionId = 0
-    private var timer = SimpleTimer(queue: netStreamLockQueue)
+    private var timer = SimpleTimer(queue: processorControlQueue)
     private var messages: [UInt16: RtmpMessage] = [:]
     private var currentChunk: RtmpChunk?
     private var fragmentedChunks: [UInt16: RtmpChunk] = [:]
+    private let name: String
 
-    override init() {
-        super.init()
-        addEventListener(.rtmpStatus, selector: #selector(on(status:)))
-    }
-
-    deinit {
-        timer.stop()
-        streams.removeAll()
-        removeEventListener(.rtmpStatus, selector: #selector(on(status:)))
+    init(name: String) {
+        self.name = name
+        socket = RtmpSocket(name: name)
     }
 
     func connect(_ url: String) {
-        netStreamLockQueue.async {
-            self.connectInternal(url)
+        guard let uri = URL(string: url),
+              let scheme = uri.scheme,
+              let host = uri.host,
+              !connected,
+              supportedProtocols.contains(scheme)
+        else {
+            return
+        }
+        self.uri = uri
+        socket = RtmpSocket(name: name)
+        socket.delegate = self
+        if scheme.hasSuffix("s") {
+            socket.connect(host: host, port: uri.port ?? 443, tlsOptions: .init())
+        } else {
+            socket.connect(host: host, port: uri.port ?? 1935, tlsOptions: nil)
         }
     }
 
     func disconnect() {
-        netStreamLockQueue.async {
-            self.disconnectInternal()
+        timer.stop()
+        stream?.closeInternal()
+        socket.close()
+        socket = RtmpSocket(name: name)
+    }
+
+    func call(_ commandName: String, arguments: [Any?], onCompleted: (([Any?]) -> Void)? = nil) {
+        guard connected else {
+            return
         }
+        let message = RtmpCommandMessage(
+            streamId: 0,
+            transactionId: getNextTransactionId(),
+            commandType: .amf0Command,
+            commandName: commandName,
+            commandObject: nil,
+            arguments: arguments
+        )
+        if let onCompleted {
+            callCompletions[message.transactionId] = onCompleted
+        }
+        _ = socket.write(chunk: RtmpChunk(message: message))
+    }
+
+    func gotCommand(data: AsObject) {
+        on(data: data)
+    }
+
+    func createStream(_ stream: RtmpStream) {
+        call("createStream", arguments: []) { data in
+            guard let id = data[0] as? Double else {
+                return
+            }
+            stream.id = UInt32(id)
+            stream.setState(state: .open)
+        }
+    }
+
+    func getNextTransactionId() -> Int {
+        nextTransactionId += 1
+        return nextTransactionId
     }
 
     private static func makeSanJoseAuthCommand(_ url: URL, description: String) -> String {
@@ -97,74 +150,15 @@ class RtmpConnection: RtmpEventDispatcher {
         return command
     }
 
-    func call(_ commandName: String, arguments: [Any?], onCompleted: (([Any?]) -> Void)? = nil) {
-        guard connected else {
-            return
-        }
-        let message = RtmpCommandMessage(
-            streamId: 0,
-            transactionId: getNextTransactionId(),
-            objectEncoding: .amf0,
-            commandName: commandName,
-            commandObject: nil,
-            arguments: arguments
-        )
-        if let onCompleted {
-            callCompletions[message.transactionId] = onCompleted
-        }
-        _ = socket.write(chunk: RtmpChunk(message: message))
-    }
-
-    private func connectInternal(_ url: String) {
-        guard let uri = URL(string: url),
-              let scheme = uri.scheme,
-              let host = uri.host,
-              !connected && supportedProtocols.contains(scheme)
-        else {
-            return
-        }
-        self.uri = uri
-        socket = socket ?? RtmpSocket()
-        socket.delegate = self
-        socket.secure = scheme.hasSuffix("s")
-        socket.connect(host: host, port: uri.port ?? (socket.secure ? 443 : 1935))
-    }
-
-    func disconnectInternal() {
-        timer.stop()
-        for stream in streams {
-            stream.closeInternal()
-        }
-        socket?.close()
-    }
-
-    func createStream(_ stream: RtmpStream) {
-        call("createStream", arguments: []) { data in
-            guard let id = data[0] as? Double else {
-                return
-            }
-            stream.id = UInt32(id)
-            stream.setReadyState(state: .open)
+    private func on(data: AsObject) {
+        processorControlQueue.async {
+            self.onInternal(data: data)
+            self.stream?.onInternal(data: data)
         }
     }
 
-    func getNextTransactionId() -> Int {
-        nextTransactionId += 1
-        return nextTransactionId
-    }
-
-    @objc
-    private func on(status: Notification) {
-        guard let event = RtmpEvent.from(status) else {
-            return
-        }
-        netStreamLockQueue.async {
-            self.onInternal(event: event)
-        }
-    }
-
-    private func onInternal(event: RtmpEvent) {
-        guard let data = event.data as? AsObject, let code = data["code"] as? String else {
+    private func onInternal(data: AsObject) {
+        guard let code = data["code"] as? String else {
             return
         }
         switch RtmpConnectionCode(rawValue: code) {
@@ -209,7 +203,7 @@ class RtmpConnection: RtmpEventDispatcher {
             connect(command)
         case description.contains("authmod=adobe"):
             if user.isEmpty || password.isEmpty {
-                disconnectInternal()
+                disconnect()
                 break
             }
             let query = uri.query ?? ""
@@ -221,21 +215,21 @@ class RtmpConnection: RtmpEventDispatcher {
     }
 
     private func handleConnectClosed() {
-        disconnectInternal()
+        disconnect()
     }
 
     private func makeConnectChunk() -> RtmpChunk? {
         guard let uri else {
             return nil
         }
-        var app = uri.path.isEmpty ? "" : String(uri.path[uri.path.index(uri.path.startIndex, offsetBy: 1)...])
+        var app = String(uri.path.trimmingPrefix(while: { $0 == "/" }))
         if let query = uri.query {
             app += "?" + query
         }
         let message = RtmpCommandMessage(
             streamId: 0,
             transactionId: getNextTransactionId(),
-            objectEncoding: .amf0,
+            commandType: .amf0Command,
             commandName: "connect",
             commandObject: [
                 "app": app,
@@ -248,7 +242,7 @@ class RtmpConnection: RtmpEventDispatcher {
                 "videoCodecs": SupportVideo.h264.rawValue,
                 "videoFunction": VideoFunction.clientSeek.rawValue,
                 "pageUrl": nil,
-                "objectEncoding": RtmpObjectEncoding.amf0.rawValue,
+                "objectEncoding": 0,
             ],
             arguments: []
         )
@@ -257,7 +251,7 @@ class RtmpConnection: RtmpEventDispatcher {
 
     private func handleHandshakeDone() {
         guard let chunk = makeConnectChunk() else {
-            disconnectInternal()
+            disconnect()
             return
         }
         _ = socket.write(chunk: chunk)
@@ -265,9 +259,7 @@ class RtmpConnection: RtmpEventDispatcher {
             guard let self else {
                 return
             }
-            for stream in self.streams {
-                stream.onTimeout()
-            }
+            stream?.onTimeout()
         })
     }
 
@@ -282,7 +274,7 @@ class RtmpConnection: RtmpEventDispatcher {
 }
 
 extension RtmpConnection: RtmpSocketDelegate {
-    func socketReadyStateChanged(_: RtmpSocket, readyState: RtmpSocketReadyState) {
+    func socketReadyStateChanged(readyState: RtmpSocketReadyState) {
         switch readyState {
         case .handshakeDone:
             handleHandshakeDone()
@@ -293,8 +285,8 @@ extension RtmpConnection: RtmpSocketDelegate {
         }
     }
 
-    func socketUpdateStats(_: RtmpSocket, totalBytesOut: Int64) {
-        streams.first?.info.onWritten(sequence: totalBytesOut)
+    func socketUpdateStats(totalBytesSent: Int64) {
+        stream?.info.onWritten(sequence: totalBytesSent)
     }
 
     func socketDataReceived(_ socket: RtmpSocket, data: Data) -> Data {
@@ -344,7 +336,7 @@ extension RtmpConnection: RtmpSocketDelegate {
         return Data()
     }
 
-    func socketDispatch(_: RtmpSocket, event: RtmpEvent) {
-        dispatch(event: event)
+    func socketPost(data: AsObject) {
+        on(data: data)
     }
 }

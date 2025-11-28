@@ -1,8 +1,30 @@
 import SwiftUI
 
+private struct AudioLevelView: View {
+    let level: Float
+
+    var body: some View {
+        if level.isNaN {
+            CompactAudioLevelIconView(
+                name: "microphone.slash",
+                foregroundColor: .white,
+                backgroundColor: backgroundColor
+            )
+        } else {
+            let (foregroundColor, backgroundColor) = compactAudioLevelColors(level: level)
+            CompactAudioLevelIconView(
+                name: "waveform",
+                foregroundColor: foregroundColor,
+                backgroundColor: backgroundColor
+            )
+        }
+    }
+}
+
 private struct StatusesView: View {
     @EnvironmentObject var model: Model
-    var textPlacement: StreamOverlayIconAndTextPlacement
+    @ObservedObject var preview: Preview
+    let textPlacement: StreamOverlayIconAndTextPlacement
 
     var body: some View {
         if model.isShowingStatusThermalState() {
@@ -10,44 +32,71 @@ private struct StatusesView: View {
                 .frame(width: 17, height: 17)
                 .font(smallFont)
                 .padding([.leading, .trailing], 2)
-                .foregroundColor(model.thermalState.color())
+                .foregroundStyle(preview.thermalState.color())
                 .background(backgroundColor)
                 .cornerRadius(5)
         }
-        StreamOverlayIconAndTextView(
-            show: model.isShowingWorkout(),
-            icon: "figure.run",
-            text: model.workoutType,
-            textPlacement: textPlacement
-        )
-        StreamOverlayIconAndTextView(
-            show: model.isShowingStatusBitrate(),
-            icon: "speedometer",
-            text: model.speedAndTotal,
-            textPlacement: textPlacement
-        )
-        StreamOverlayIconAndTextView(
-            show: model.isShowingStatusRecording(),
-            icon: "record.circle",
-            text: model.recordingLength,
-            textPlacement: textPlacement
-        )
+        if model.isShowingWorkout() {
+            StreamOverlayIconAndTextView(
+                icon: "figure.run",
+                text: preview.workoutType,
+                textPlacement: textPlacement
+            )
+        }
+        if model.isShowingStatusBitrate() {
+            StreamOverlayIconAndTextView(
+                icon: "speedometer",
+                text: preview.speedAndTotal,
+                textPlacement: textPlacement
+            )
+        }
+        if model.isShowingStatusRecording() {
+            StreamOverlayIconAndTextView(
+                icon: "record.circle",
+                text: preview.recordingLength,
+                textPlacement: textPlacement
+            )
+        }
+        if model.isShowingStatusAudioLevel() {
+            AudioLevelView(level: preview.audioLevel)
+        }
     }
+}
+
+class Preview: ObservableObject {
+    @Published var speedAndTotal = noValue
+    @Published var recordingLength = noValue
+    @Published var thermalState = ProcessInfo.ThermalState.nominal
+    @Published var workoutType = noValue
+    @Published var image: UIImage?
+    @Published var showPreviewDisconnected = true
+    @Published var viewerCount = noValue
+    @Published var zoomX = 0.0
+    @Published var isZooming = false
+    @Published var verboseStatuses = false
+    @Published var zoomPresetIdPicker: UUID?
+    @Published var zoomPresetId: UUID = .init()
+    @Published var zoomPresets: [WatchProtocolZoomPreset] = []
+    @Published var scenes: [WatchProtocolScene] = []
+    @Published var sceneId: UUID = .init()
+    @Published var sceneIdPicker: UUID = .init()
+    @Published var audioLevel: Float = defaultAudioLevel
 }
 
 struct PreviewView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var preview: Preview
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                if let preview = model.preview {
-                    Image(uiImage: preview)
+                if let image = preview.image {
+                    Image(uiImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity)
                 }
-                if model.showPreviewDisconnected {
+                if preview.showPreviewDisconnected {
                     VStack {
                         Spacer()
                         HStack {
@@ -55,7 +104,7 @@ struct PreviewView: View {
                             Image(systemName: "cable.connector.slash")
                                 .font(.title)
                                 .padding(5)
-                                .foregroundColor(.white)
+                                .foregroundStyle(.white)
                                 .background(backgroundColor)
                                 .cornerRadius(5)
                             Spacer()
@@ -68,41 +117,36 @@ struct PreviewView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 1) {
                         Spacer()
-                        if !model.viaRemoteControl {
+                        if !model.viaRemoteControl, preview.viewerCount != noValue {
                             StreamOverlayIconAndTextView(
-                                show: model.viewerCount != noValue,
                                 icon: "eye",
-                                text: model.viewerCount,
+                                text: preview.viewerCount,
                                 textPlacement: .afterIcon
                             )
                         }
                         StreamOverlayIconAndTextView(
-                            show: true,
                             icon: "magnifyingglass",
-                            text: String(format: "%.1f", model.zoomX),
+                            text: String(format: "%.1f", preview.zoomX),
                             textPlacement: .afterIcon
                         )
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 1) {
                         Spacer()
-                        if model.verboseStatuses {
-                            StatusesView(textPlacement: .beforeIcon)
+                        if preview.verboseStatuses {
+                            StatusesView(preview: preview, textPlacement: .beforeIcon)
                         } else {
                             HStack(spacing: 1) {
-                                StatusesView(textPlacement: .hide)
+                                StatusesView(preview: preview, textPlacement: .hide)
                             }
-                        }
-                        if model.isShowingStatusAudioLevel() {
-                            AudioLevelView(level: model.audioLevel)
                         }
                     }
                     .onTapGesture {
-                        model.verboseStatuses.toggle()
+                        preview.verboseStatuses.toggle()
                     }
                 }
                 .focusable(true)
-                .digitalCrownRotation(detent: $model.zoomX,
+                .digitalCrownRotation(detent: $preview.zoomX,
                                       from: 0.5,
                                       through: 10,
                                       by: 0.1,
@@ -110,10 +154,10 @@ struct PreviewView: View {
                                       isContinuous: false,
                                       isHapticFeedbackEnabled: true)
                 { _ in
-                    model.isZooming = true
+                    preview.isZooming = true
                 } onIdle: {
-                    model.isZooming = false
-                    model.setZoom(x: model.zoomX)
+                    preview.isZooming = false
+                    model.setZoom(x: preview.zoomX)
                 }
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .frame(maxWidth: .infinity)
@@ -121,16 +165,16 @@ struct PreviewView: View {
             .padding([.bottom], 3)
             List {
                 if !model.viaRemoteControl {
-                    Picker(selection: $model.zoomPresetIdPicker) {
-                        ForEach(model.zoomPresets) { zoomPreset in
+                    Picker(selection: $preview.zoomPresetIdPicker) {
+                        ForEach(preview.zoomPresets) { zoomPreset in
                             Text(zoomPreset.name)
                                 .tag(zoomPreset.id as UUID?)
                         }
-                        .onChange(of: model.zoomPresetIdPicker) { _, _ in
-                            guard model.zoomPresetIdPicker != model.zoomPresetId else {
+                        .onChange(of: preview.zoomPresetIdPicker) { _, _ in
+                            guard preview.zoomPresetIdPicker != preview.zoomPresetId else {
                                 return
                             }
-                            model.setZoomPreset(id: model.zoomPresetIdPicker ?? .init())
+                            model.setZoomPreset(id: preview.zoomPresetIdPicker ?? .init())
                         }
                         Text("Other")
                             .tag(nil as UUID?)
@@ -138,16 +182,16 @@ struct PreviewView: View {
                         Text("Zoom")
                     }
                 }
-                if model.scenes.contains(where: { model.sceneIdPicker == $0.id }) {
-                    Picker(selection: $model.sceneIdPicker) {
-                        ForEach(model.scenes) { scene in
+                if preview.scenes.contains(where: { preview.sceneIdPicker == $0.id }) {
+                    Picker(selection: $preview.sceneIdPicker) {
+                        ForEach(preview.scenes) { scene in
                             Text(scene.name)
                         }
-                        .onChange(of: model.sceneIdPicker) { _, _ in
-                            guard model.sceneIdPicker != model.sceneId else {
+                        .onChange(of: preview.sceneIdPicker) { _, _ in
+                            guard preview.sceneIdPicker != preview.sceneId else {
                                 return
                             }
-                            model.setScene(id: model.sceneIdPicker)
+                            model.setScene(id: preview.sceneIdPicker)
                         }
                     } label: {
                         Text("Scene")

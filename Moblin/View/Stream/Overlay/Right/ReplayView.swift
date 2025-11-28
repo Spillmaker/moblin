@@ -32,19 +32,19 @@ private struct ReplayControlsInterval: View {
 
     var body: some View {
         Slider(value: $replay.startFromEnd,
-               in: 0 ... 30,
+               in: 0 ... SettingsReplay.stop,
                step: 0.1,
                onEditingChanged: { _ in
                })
                .frame(width: 250)
                .onChange(of: replay.startFromEnd) {
-                   model.setReplayPosition(start: 30 - $0)
+                   model.setReplayPosition(start: SettingsReplay.stop - $0)
                }
                .rotationEffect(.degrees(180))
         Text("\(Int(replay.startFromEnd))s")
             .frame(width: 35)
             .font(.body)
-            .foregroundColor(.white)
+            .foregroundStyle(.white)
     }
 }
 
@@ -67,7 +67,7 @@ private struct ReplayControlsSpeedPicker: View {
         .onChange(of: replay.speed) { _ in
             model.replaySpeedChanged()
         }
-        .foregroundColor(.white)
+        .foregroundStyle(.white)
     }
 }
 
@@ -97,7 +97,7 @@ private struct ReplayControlsPlayPauseButton: View {
             let image = Image(systemName: playStopImage())
                 .frame(width: 30)
             if replay.selectedId != nil {
-                image.foregroundColor(.white)
+                image.foregroundStyle(.white)
             } else {
                 image
             }
@@ -125,7 +125,7 @@ private struct ReplayControlsSaveButton: View {
             } label: {
                 Image(systemName: "square.and.arrow.down")
                     .frame(width: 30)
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
             }
         }
     }
@@ -134,14 +134,7 @@ private struct ReplayControlsSaveButton: View {
 private struct ReplayControls: View {
     @EnvironmentObject var model: Model
     @ObservedObject var replay: ReplayProvider
-
-    private func playStopImage() -> String {
-        if replay.isPlaying {
-            return "stop"
-        } else {
-            return "play"
-        }
-    }
+    @ObservedObject var orientation: Orientation
 
     private func portrait() -> some View {
         VStack(alignment: .trailing) {
@@ -186,7 +179,7 @@ private struct ReplayControls: View {
     }
 
     var body: some View {
-        if model.stream.portrait {
+        if orientation.isPortrait {
             portrait()
         } else {
             landscape()
@@ -197,7 +190,8 @@ private struct ReplayControls: View {
 private struct ReplayHistoryItem: View {
     @EnvironmentObject var model: Model
     @ObservedObject var replay: ReplayProvider
-    var video: ReplaySettings
+    let video: ReplaySettings
+    @State var image: UIImage?
 
     private func height() -> Double {
         if model.stream.portrait {
@@ -208,21 +202,30 @@ private struct ReplayHistoryItem: View {
     }
 
     var body: some View {
-        if let image = createThumbnail(path: video.url(), offset: video.thumbnailOffset()) {
-            Image(uiImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .cornerRadius(5)
-                .frame(height: height())
-                .onTapGesture {
-                    model.loadReplay(video: video)
-                }
-                .overlay {
-                    if video.id == replay.selectedId {
-                        RoundedRectangle(cornerRadius: 5)
-                            .stroke(.white, lineWidth: 2)
+        VStack {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .cornerRadius(5)
+                    .frame(height: height())
+                    .onTapGesture {
+                        model.loadReplay(video: video)
                     }
-                }
+                    .overlay {
+                        if video.id == replay.selectedId {
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(.white, lineWidth: 2)
+                        }
+                    }
+            } else {
+                Image(systemName: "camera")
+            }
+        }
+        .onAppear {
+            createThumbnail(path: video.url(), offset: video.thumbnailOffset()) { image in
+                self.image = image
+            }
         }
     }
 }
@@ -245,7 +248,7 @@ private struct ReplayHistory: View {
                 if model.replaysStorage.database.replays.isEmpty {
                     Text("No replays saved")
                         .padding([.leading], 30)
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                 }
                 ForEach(model.replaysStorage.database.replays) {
                     ReplayHistoryItem(replay: replay, video: $0)
@@ -262,11 +265,12 @@ private struct ReplayHistory: View {
 
 struct StreamOverlayRightReplayView: View {
     @ObservedObject var replay: ReplayProvider
+    let orientation: Orientation
 
     var body: some View {
         VStack(alignment: .trailing) {
             ReplayPreview(replay: replay)
-            ReplayControls(replay: replay)
+            ReplayControls(replay: replay, orientation: orientation)
             ReplayHistory(replay: replay)
         }
     }

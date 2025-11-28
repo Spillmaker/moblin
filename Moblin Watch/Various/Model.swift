@@ -8,19 +8,19 @@ import WatchConnectivity
 private let previewTimeout = Duration.seconds(6)
 
 struct TextWidgetNumber: Identifiable {
-    var id: UUID = .init()
-    var value: Int
+    let id: UUID = .init()
+    let value: Int
 }
 
 struct TextWidgetNumberPair: Identifiable {
-    var id: UUID = .init()
-    var title: String
-    var numbers: [TextWidgetNumber]
+    let id: UUID = .init()
+    let title: String
+    let numbers: [TextWidgetNumber]
 }
 
 struct ChatPostSegment: Identifiable {
-    var id = UUID()
-    var text: String?
+    let id = UUID()
+    let text: String?
     var url: URL?
 }
 
@@ -31,11 +31,14 @@ enum ChatPostKind {
 }
 
 enum ChatPostHighlightKind {
+    case reply
     case redemption
     case other
 
     static func fromWatchProtocol(kind: WatchProtocolChatHighlightKind) -> ChatPostHighlightKind {
         switch kind {
+        case .reply:
+            return .reply
         case .redemption:
             return .redemption
         case .other:
@@ -46,14 +49,14 @@ enum ChatPostHighlightKind {
 
 struct ChatPostHighlight {
     let kind: ChatPostHighlightKind
-    let color: Color
+    let barColor: Color
     let image: String
     let title: String
 
     static func fromWatchProtocol(highlight: WatchProtocolChatHighlight) -> ChatPostHighlight {
         return ChatPostHighlight(
             kind: ChatPostHighlightKind.fromWatchProtocol(kind: highlight.kind),
-            color: highlight.color.color(),
+            barColor: highlight.barColor.color(),
             image: highlight.image,
             title: highlight.title
         )
@@ -61,13 +64,13 @@ struct ChatPostHighlight {
 }
 
 struct ChatPost: Identifiable {
-    var id: Int
-    var kind: ChatPostKind
-    var user: String
-    var userColor: Color
-    var userBadges: [URL]
-    var segments: [ChatPostSegment]
-    var timestamp: String
+    let id: Int
+    let kind: ChatPostKind
+    let displayName: String
+    let userColor: Color
+    let userBadges: [URL]
+    let segments: [ChatPostSegment]
+    let timestamp: String
     var highlight: ChatPostHighlight?
 
     func isRedemption() -> Bool {
@@ -75,21 +78,18 @@ struct ChatPost: Identifiable {
     }
 }
 
-enum PadelScoreboardScoreIncrement {
-    case home
-    case away
-}
-
 class Model: NSObject, ObservableObject {
-    @Published var chatPosts = Deque<ChatPost>()
-    @Published var speedAndTotal = noValue
+    let chat = Chat()
+    let preview = Preview()
+    let control = Control()
+    let padel = Padel()
+    let generic = Generic()
+    @Published var scoreboardType: ScoreboardType?
+    var scoreboardId: UUID?
+    @Published var viaRemoteControl = false
     private var latestSpeedAndTotalTime = ContinuousClock.now
-    @Published var recordingLength = noValue
     private var latestRecordingLengthTime = ContinuousClock.now
-    @Published var audioLevel: Float = defaultAudioLevel
     private var latestAudioLevelTime = ContinuousClock.now
-    @Published var preview: UIImage?
-    @Published var showPreviewDisconnected = true
     private var latestPreviewTime = ContinuousClock.now
     var settings = WatchSettings()
     private var latestChatMessageTime = ContinuousClock.now
@@ -98,36 +98,10 @@ class Model: NSObject, ObservableObject {
     private var nextNonNormalChatLineId = -1
     private var logId = 1
     var numberOfMessagesReceived = 0
-    @Published var viaRemoteControl = false
-    @Published var isLive = false
-    @Published var isRecording = false
-    @Published var isMuted = false
-    @Published var thermalState = ProcessInfo.ThermalState.nominal
     private var latestThermalStateTime = ContinuousClock.now
-    @Published var zoomX = 0.0
-    @Published var isZooming = false
-    @Published var zoomPresets: [WatchProtocolZoomPreset] = []
-    @Published var zoomPresetId: UUID = .init()
-    @Published var zoomPresetIdPicker: UUID?
-    @Published var scenes: [WatchProtocolScene] = []
-    @Published var sceneId: UUID = .init()
-    @Published var sceneIdPicker: UUID = .init()
-    @Published var verboseStatuses = false
     private var healthStore = HKHealthStore()
     private var workoutSession: HKWorkoutSession?
     private var workoutBuilder: HKLiveWorkoutBuilder?
-    @Published var workoutType = noValue
-    @Published var viewerCount = noValue
-    @Published var showPadelScoreBoard = false
-    @Published var padelScoreboard: PadelScoreboard = .init(
-        id: .init(),
-        home: .init(players: []),
-        away: .init(players: []),
-        score: []
-    )
-    @Published var scoreboardPlayers: [PadelScoreboardPlayersPlayer] = []
-    private var padelScoreboardScoreChanges: [PadelScoreboardScoreIncrement] = []
-    @Published var padelScoreboardIncrementTintColor: Color?
 
     func setup() {
         if WCSession.isSupported() {
@@ -135,10 +109,10 @@ class Model: NSObject, ObservableObject {
             session.delegate = self
             session.activate()
         }
-        setupPeriodicTimers()
+        startPeriodicTimers()
     }
 
-    private func setupPeriodicTimers() {
+    private func startPeriodicTimers() {
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true, block: { _ in
             self.updatePreview()
             self.keepAlive()
@@ -147,20 +121,20 @@ class Model: NSObject, ObservableObject {
 
     private func updatePreview() {
         let deadline = ContinuousClock.now - previewTimeout
-        if latestPreviewTime < deadline, !showPreviewDisconnected {
-            showPreviewDisconnected = true
+        if latestPreviewTime < deadline, !preview.showPreviewDisconnected {
+            preview.showPreviewDisconnected = true
         }
-        if latestSpeedAndTotalTime < deadline, speedAndTotal != noValue {
-            speedAndTotal = noValue
+        if latestSpeedAndTotalTime < deadline, preview.speedAndTotal != noValue {
+            preview.speedAndTotal = noValue
         }
-        if latestRecordingLengthTime < deadline, recordingLength != noValue {
-            recordingLength = noValue
+        if latestRecordingLengthTime < deadline, preview.recordingLength != noValue {
+            preview.recordingLength = noValue
         }
-        if latestAudioLevelTime < deadline, audioLevel != defaultAudioLevel {
-            audioLevel = defaultAudioLevel
+        if latestAudioLevelTime < deadline, preview.audioLevel != defaultAudioLevel {
+            preview.audioLevel = defaultAudioLevel
         }
-        if latestThermalStateTime < deadline, thermalState != ProcessInfo.ThermalState.nominal {
-            thermalState = ProcessInfo.ThermalState.nominal
+        if latestThermalStateTime < deadline, preview.thermalState != ProcessInfo.ThermalState.nominal {
+            preview.thermalState = ProcessInfo.ThermalState.nominal
         }
     }
 
@@ -173,24 +147,24 @@ class Model: NSObject, ObservableObject {
 
     private func appendInfoMessage(message: WatchProtocolChatMessage, segments: [ChatPostSegment]) {
         nextNonNormalChatLineId -= 1
-        chatPosts.prepend(ChatPost(id: nextNonNormalChatLineId,
-                                   kind: .info,
-                                   user: "",
-                                   userColor: .white,
-                                   userBadges: [],
-                                   segments: segments,
-                                   timestamp: message.timestamp))
+        chat.posts.prepend(ChatPost(id: nextNonNormalChatLineId,
+                                    kind: .info,
+                                    displayName: "",
+                                    userColor: .white,
+                                    userBadges: [],
+                                    segments: segments,
+                                    timestamp: message.timestamp))
     }
 
     private func appendRedLineMessage(message: WatchProtocolChatMessage) {
         nextNonNormalChatLineId -= 1
-        chatPosts.prepend(ChatPost(id: nextNonNormalChatLineId,
-                                   kind: .redLine,
-                                   user: "",
-                                   userColor: .red,
-                                   userBadges: [],
-                                   segments: [],
-                                   timestamp: message.timestamp))
+        chat.posts.prepend(ChatPost(id: nextNonNormalChatLineId,
+                                    kind: .redLine,
+                                    displayName: "",
+                                    userColor: .red,
+                                    userBadges: [],
+                                    segments: [],
+                                    timestamp: message.timestamp))
     }
 
     private func handleChatMessage(_ data: Any) throws {
@@ -199,12 +173,12 @@ class Model: NSObject, ObservableObject {
         }
         let message = try JSONDecoder().decode(WatchProtocolChatMessage.self, from: data)
         // Latest received message is often retransmitted. Just ignore it if so (or likely so).
-        if message.id == chatPosts.first?.id {
+        if message.id == chat.posts.first?.id {
             return
         }
         if message.id < nextExpectedWatchChatPostId {
             nextExpectedWatchChatPostId = message.id
-            chatPosts.removeAll()
+            chat.posts.removeAll()
             numberOfNormalPostsInChat = 0
             latestChatMessageTime = .now
             appendInfoMessage(message: message, segments: [
@@ -228,10 +202,10 @@ class Model: NSObject, ObservableObject {
             }
         }
         latestChatMessageTime = now
-        chatPosts.prepend(
+        chat.posts.prepend(
             ChatPost(id: message.id,
                      kind: .normal,
-                     user: message.user,
+                     displayName: message.displayName,
                      userColor: message.userColor.color(),
                      userBadges: message.userBadges,
                      segments: message.segments.map { ChatPostSegment(
@@ -243,7 +217,7 @@ class Model: NSObject, ObservableObject {
         )
         numberOfNormalPostsInChat += 1
         while numberOfNormalPostsInChat > maximumNumberOfWatchChatMessages {
-            if chatPosts.popLast()?.kind == .normal {
+            if chat.posts.popLast()?.kind == .normal {
                 numberOfNormalPostsInChat -= 1
             }
         }
@@ -253,7 +227,7 @@ class Model: NSObject, ObservableObject {
         guard let speedAndTotal = data as? String else {
             return
         }
-        self.speedAndTotal = speedAndTotal
+        preview.speedAndTotal = speedAndTotal
         latestSpeedAndTotalTime = .now
     }
 
@@ -261,7 +235,7 @@ class Model: NSObject, ObservableObject {
         guard let recordingLength = data as? String else {
             return
         }
-        self.recordingLength = recordingLength
+        preview.recordingLength = recordingLength
         latestRecordingLengthTime = .now
     }
 
@@ -269,7 +243,7 @@ class Model: NSObject, ObservableObject {
         guard let audioLevel = data as? Float else {
             return
         }
-        self.audioLevel = audioLevel
+        preview.audioLevel = audioLevel
         latestAudioLevelTime = .now
     }
 
@@ -277,21 +251,21 @@ class Model: NSObject, ObservableObject {
         guard let value = data as? Bool else {
             return
         }
-        isLive = value
+        control.isLive = value
     }
 
     private func handleIsRecording(_ data: Any) throws {
         guard let value = data as? Bool else {
             return
         }
-        isRecording = value
+        control.isRecording = value
     }
 
     private func handleIsMuted(_ data: Any) throws {
         guard let value = data as? Bool else {
             return
         }
-        isMuted = value
+        control.isMuted = value
     }
 
     private func handleSettings(_ data: Any) throws {
@@ -308,7 +282,7 @@ class Model: NSObject, ObservableObject {
         else {
             return
         }
-        self.thermalState = thermalState
+        preview.thermalState = thermalState
         latestThermalStateTime = .now
     }
 
@@ -316,8 +290,8 @@ class Model: NSObject, ObservableObject {
         guard let image = data as? Data else {
             return
         }
-        preview = UIImage(data: image)
-        showPreviewDisconnected = false
+        preview.image = UIImage(data: image)
+        preview.showPreviewDisconnected = false
         latestPreviewTime = .now
     }
 
@@ -325,17 +299,17 @@ class Model: NSObject, ObservableObject {
         guard let x = data as? Float else {
             return
         }
-        guard !isZooming else {
+        guard !preview.isZooming else {
             return
         }
-        zoomX = Double(x)
+        preview.zoomX = Double(x)
     }
 
     private func handleZoomPresets(_ data: Any) throws {
         guard let data = data as? Data else {
             return
         }
-        zoomPresets = try JSONDecoder().decode([WatchProtocolZoomPreset].self, from: data)
+        preview.zoomPresets = try JSONDecoder().decode([WatchProtocolZoomPreset].self, from: data)
         updateZoomPresets()
     }
 
@@ -346,15 +320,15 @@ class Model: NSObject, ObservableObject {
         guard let zoomPresetId = UUID(uuidString: data) else {
             return
         }
-        self.zoomPresetId = zoomPresetId
+        preview.zoomPresetId = zoomPresetId
         updateZoomPresets()
     }
 
     private func updateZoomPresets() {
-        if zoomPresets.contains(where: { $0.id == zoomPresetId }) {
-            zoomPresetIdPicker = zoomPresetId
+        if preview.zoomPresets.contains(where: { $0.id == preview.zoomPresetId }) {
+            preview.zoomPresetIdPicker = preview.zoomPresetId
         } else {
-            zoomPresetIdPicker = nil
+            preview.zoomPresetIdPicker = nil
         }
     }
 
@@ -362,7 +336,7 @@ class Model: NSObject, ObservableObject {
         guard let data = data as? Data else {
             return
         }
-        scenes = try JSONDecoder().decode([WatchProtocolScene].self, from: data)
+        preview.scenes = try JSONDecoder().decode([WatchProtocolScene].self, from: data)
     }
 
     private func handleScene(_ data: Any) throws {
@@ -372,8 +346,8 @@ class Model: NSObject, ObservableObject {
         guard let sceneId = UUID(uuidString: data) else {
             return
         }
-        self.sceneId = sceneId
-        sceneIdPicker = sceneId
+        preview.sceneId = sceneId
+        preview.sceneIdPicker = sceneId
     }
 
     private func handleStartWorkout(_ data: Any) throws {
@@ -387,13 +361,13 @@ class Model: NSObject, ObservableObject {
         switch message.type {
         case .walking:
             activityType = .walking
-            workoutType = "Walking"
+            preview.workoutType = "Walking"
         case .running:
             activityType = .running
-            workoutType = "Running"
+            preview.workoutType = "Running"
         case .cycling:
             activityType = .cycling
-            workoutType = "Cycling"
+            preview.workoutType = "Cycling"
         }
         configuration.activityType = activityType
         configuration.locationType = .outdoor
@@ -416,7 +390,6 @@ class Model: NSObject, ObservableObject {
     }
 
     private func handleStopWorkout() {
-        // workoutBuilder?.discardWorkout()
         workoutBuilder?.finishWorkout { _, _ in }
         workoutSession?.end()
     }
@@ -425,35 +398,7 @@ class Model: NSObject, ObservableObject {
         guard let value = data as? String else {
             return
         }
-        viewerCount = value
-    }
-
-    private func handlePadelScoreboard(_ data: Any) throws {
-        guard let data = data as? Data else {
-            return
-        }
-        let scoreboard = try JSONDecoder().decode(WatchProtocolPadelScoreboard.self, from: data)
-        padelScoreboard.id = scoreboard.id
-        padelScoreboard.home = .init(players: scoreboard.home.map { .init(id: $0) })
-        padelScoreboard.away = .init(players: scoreboard.away.map { .init(id: $0) })
-        padelScoreboard.score = scoreboard.score.map { .init(home: $0.home, away: $0.away) }
-        showPadelScoreBoard = true
-    }
-
-    func findScoreboardPlayer(id: UUID) -> String {
-        return scoreboardPlayers.first(where: { $0.id == id })?.name ?? "🇸🇪 Moblin"
-    }
-
-    private func handleRemovePadelScoreboard(_: Any) throws {
-        showPadelScoreBoard = false
-    }
-
-    private func handleScoreboardPlayers(_ data: Any) throws {
-        guard let data = data as? Data else {
-            return
-        }
-        let players = try JSONDecoder().decode([WatchProtocolScoreboardPlayer].self, from: data)
-        scoreboardPlayers = players.map { .init(id: $0.id, name: $0.name) }
+        preview.viewerCount = value
     }
 
     private func isWorkoutRunning() -> Bool {
@@ -485,8 +430,12 @@ class Model: NSObject, ObservableObject {
         WCSession.default.sendMessage(message, replyHandler: nil)
     }
 
-    func instantReplay() {
-        let message = WatchMessageFromWatch.pack(type: .instantReplay, data: true)
+    func instantReplay(duration: Int) {
+        let data = WatchProtocolInstantReplay(duration: duration)
+        guard let data = try? JSONEncoder().encode(data) else {
+            return
+        }
+        let message = WatchMessageFromWatch.pack(type: .instantReplay, data: data)
         WCSession.default.sendMessage(message, replyHandler: nil)
     }
 
@@ -527,163 +476,20 @@ class Model: NSObject, ObservableObject {
     }
 
     func isShowingStatusBitrate() -> Bool {
-        return settings.show.speed && isLive
+        return settings.show.speed && control.isLive
     }
 
     func isShowingStatusRecording() -> Bool {
-        return isRecording
+        return control.isRecording
     }
 
     func isShowingWorkout() -> Bool {
         return isWorkoutRunning()
     }
 
-    func padelScoreboardIncrementHomeScore() {
-        if padelScoreboardIncrementTintColor == nil {
-            guard !isMatchCompleted() else {
-                updatePadelScoreboard()
-                return
-            }
-            padelScoreboard.score[padelScoreboard.score.count - 1].home += 1
-            padelScoreboardScoreChanges.append(.home)
-            guard let score = padelScoreboard.score.last else {
-                updatePadelScoreboard()
-                return
-            }
-            if isSetCompleted(score: score) {
-                padelScoreboardIncrementTintColor = .green
-            }
-        } else {
-            padelScoreboardUpdateSetCompleted()
-            padelScoreboardIncrementTintColor = nil
-        }
-        updatePadelScoreboard()
-    }
-
-    func padelScoreboardIncrementAwayScore() {
-        if padelScoreboardIncrementTintColor == nil {
-            guard !isMatchCompleted() else {
-                updatePadelScoreboard()
-                return
-            }
-            padelScoreboard.score[padelScoreboard.score.count - 1].away += 1
-            padelScoreboardScoreChanges.append(.away)
-            guard let score = padelScoreboard.score.last else {
-                updatePadelScoreboard()
-                return
-            }
-            if isSetCompleted(score: score) {
-                padelScoreboardIncrementTintColor = .green
-            }
-        } else {
-            padelScoreboardUpdateSetCompleted()
-            padelScoreboardIncrementTintColor = nil
-        }
-        updatePadelScoreboard()
-    }
-
-    func padelScoreboardUndoScore() {
-        guard let team = padelScoreboardScoreChanges.popLast() else {
-            updatePadelScoreboard()
-            return
-        }
-        guard let score = padelScoreboard.score.last else {
-            updatePadelScoreboard()
-            return
-        }
-        if score.home == 0 && score.away == 0 && padelScoreboard.score.count > 1 {
-            padelScoreboard.score.removeLast()
-        }
-        let index = padelScoreboard.score.count - 1
-        switch team {
-        case .home:
-            if padelScoreboard.score[index].home > 0 {
-                padelScoreboard.score[index].home -= 1
-            }
-        case .away:
-            if padelScoreboard.score[index].away > 0 {
-                padelScoreboard.score[index].away -= 1
-            }
-        }
-        guard let score = padelScoreboard.score.last else {
-            updatePadelScoreboard()
-            return
-        }
-        if isSetCompleted(score: score) {
-            padelScoreboardIncrementTintColor = .green
-        } else {
-            padelScoreboardIncrementTintColor = nil
-        }
-        updatePadelScoreboard()
-    }
-
-    func resetPadelScoreBoard() {
-        padelScoreboard.score = [
-            .init(home: 0, away: 0),
-        ]
-        padelScoreboardScoreChanges.removeAll()
-        padelScoreboardIncrementTintColor = nil
-        updatePadelScoreboard()
-    }
-
-    private func padelScoreboardUpdateSetCompleted() {
-        guard let score = padelScoreboard.score.last else {
-            return
-        }
-        guard isSetCompleted(score: score) else {
-            return
-        }
-        guard !isMatchCompleted() else {
-            return
-        }
-        padelScoreboard.score.append(.init(home: 0, away: 0))
-    }
-
-    func updatePadelScoreboard() {
-        let home = padelScoreboard.home.players.map { $0.id }
-        let away = padelScoreboard.away.players.map { $0.id }
-        let score: [WatchProtocolPadelScoreboardScore] = padelScoreboard.score.map { .init(
-            home: $0.home,
-            away: $0.away
-        ) }
-        let scoreBoard = WatchProtocolPadelScoreboard(
-            id: padelScoreboard.id,
-            home: home,
-            away: away,
-            score: score
-        )
-        guard let scoreBoard = try? JSONEncoder().encode(scoreBoard) else {
-            return
-        }
-        let message = WatchMessageFromWatch.pack(type: .updatePadelScoreboard, data: scoreBoard)
-        WCSession.default.sendMessage(message, replyHandler: nil)
-    }
-
     func createStreamMarker() {
         let message = WatchMessageFromWatch.pack(type: .createStreamMarker, data: true)
         WCSession.default.sendMessage(message, replyHandler: nil)
-    }
-
-    private func isSetCompleted(score: PadelScoreboardScore) -> Bool {
-        let maxScore = max(score.home, score.away)
-        let minScore = min(score.home, score.away)
-        if maxScore == 6 && minScore <= 4 {
-            return true
-        }
-        if maxScore == 7 {
-            return true
-        }
-        return false
-    }
-
-    private func isMatchCompleted() -> Bool {
-        if padelScoreboard.score.count < 5 {
-            return false
-        }
-        guard let score = padelScoreboard.score.last else {
-            return false
-        }
-        return isSetCompleted(score: score)
     }
 }
 
@@ -740,8 +546,10 @@ extension Model: WCSessionDelegate {
                     self.handleViewerCount(data)
                 case .padelScoreboard:
                     try self.handlePadelScoreboard(data)
-                case .removePadelScoreboard:
-                    try self.handleRemovePadelScoreboard(data)
+                case .genericScoreboard:
+                    try self.handleGenericScoreboard(data)
+                case .removeScoreboard:
+                    try self.handleRemoveScoreboard(data)
                 case .scoreboardPlayers:
                     try self.handleScoreboardPlayers(data)
                 }

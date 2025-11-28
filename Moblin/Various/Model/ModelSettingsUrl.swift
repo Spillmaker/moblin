@@ -67,46 +67,72 @@ extension Model {
     }
 
     private func handleSettingsUrlsDefaultQuickButtons(settings: MoblinSettingsUrl) {
-        if let quickButtons = settings.quickButtons {
-            if let twoColumns = quickButtons.twoColumns {
-                database.quickButtonsGeneral.twoColumns = twoColumns
+        guard let quickButtons = settings.quickButtons else {
+            return
+        }
+        if let twoColumns = quickButtons.twoColumns {
+            database.quickButtonsGeneral.twoColumns = twoColumns
+        }
+        if let showName = quickButtons.showName {
+            database.quickButtonsGeneral.showName = showName
+        }
+        if let enableScroll = quickButtons.enableScroll {
+            database.quickButtonsGeneral.enableScroll = enableScroll
+        }
+        if quickButtons.disableAllButtons == true {
+            for globalButton in database.quickButtons {
+                globalButton.enabled = false
             }
-            if let showName = quickButtons.showName {
-                database.quickButtonsGeneral.showName = showName
-            }
-            if let enableScroll = quickButtons.enableScroll {
-                database.quickButtonsGeneral.enableScroll = enableScroll
-            }
-            if quickButtons.disableAllButtons == true {
-                for globalButton in database.quickButtons {
-                    globalButton.enabled = false
+        }
+        for button in quickButtons.buttons ?? [] {
+            for globalButton in database.quickButtons {
+                guard button.type == globalButton.type else {
+                    continue
                 }
-            }
-            for button in quickButtons.buttons ?? [] {
-                for globalButton in database.quickButtons {
-                    guard button.type == globalButton.type else {
-                        continue
-                    }
-                    if let enabled = button.enabled {
-                        globalButton.enabled = enabled
-                    }
+                if let enabled = button.enabled {
+                    globalButton.enabled = enabled
                 }
             }
         }
     }
 
     private func handleSettingsUrlsDefaultWebBrowser(settings: MoblinSettingsUrl) {
-        if let webBrowser = settings.webBrowser {
-            if let home = webBrowser.home {
-                database.webBrowser.home = home
+        guard let webBrowser = settings.webBrowser else {
+            return
+        }
+        if let home = webBrowser.home {
+            database.webBrowser.home = home
+        }
+    }
+
+    private func handleSettingsUrlsDefaultRemoteControl(settings: MoblinSettingsUrl) {
+        guard let remoteControl = settings.remoteControl else {
+            return
+        }
+        if let assistant = remoteControl.assistant {
+            database.remoteControl.assistant.enabled = assistant.enabled
+            database.remoteControl.assistant.port = assistant.port
+            if let relay = assistant.relay {
+                database.remoteControl.assistant.relay.enabled = relay.enabled
+                database.remoteControl.assistant.relay.baseUrl = relay.baseUrl.trim()
+                database.remoteControl.assistant.relay.bridgeId = relay.bridgeId.trim()
             }
         }
+        if let streamer = remoteControl.streamer {
+            database.remoteControl.streamer.enabled = streamer.enabled
+            database.remoteControl.streamer.url = streamer.url.trim()
+        }
+        database.remoteControl.password = remoteControl.password
+        reloadRemoteControlStreamer()
+        reloadRemoteControlAssistant()
+        reloadRemoteControlRelay()
     }
 
     private func handleSettingsUrlsDefault(settings: MoblinSettingsUrl) {
         handleSettingsUrlsDefaultStreams(settings: settings)
         handleSettingsUrlsDefaultQuickButtons(settings: settings)
         handleSettingsUrlsDefaultWebBrowser(settings: settings)
+        handleSettingsUrlsDefaultRemoteControl(settings: settings)
         makeToast(title: String(localized: "URL import successful"))
         updateQuickButtonStates()
     }
@@ -135,7 +161,7 @@ extension Model {
         } catch {
             return error.localizedDescription
         }
-        if isPresentingWizard || isPresentingSetupWizard {
+        if createStreamWizard.isPresenting || createStreamWizard.isPresentingSetup {
             handleSettingsUrlsInWizard(settings: settings)
         } else {
             handleSettingsUrlsDefault(settings: settings)

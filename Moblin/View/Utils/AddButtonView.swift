@@ -1,17 +1,11 @@
 import SwiftUI
 
 struct AddButtonView: View {
-    var action: () -> Void
+    let action: () -> Void
 
     var body: some View {
-        Button {
+        TextButtonView("Add") {
             action()
-        } label: {
-            HStack {
-                Spacer()
-                Text("Add")
-                Spacer()
-            }
         }
     }
 }

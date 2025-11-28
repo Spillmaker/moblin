@@ -29,9 +29,32 @@ struct AdtsHeader: Equatable {
         copyrightIdBit = (data[3] & 0b0000_1000) == 0b0000_1000
         copyrightIdStart = (data[3] & 0b0000_0100) == 0b0000_0100
         aacFrameLength = UInt16(data[3] & 0b0000_0011) << 11 | UInt16(data[4]) << 3 | UInt16(data[5] >> 5)
-        guard aacFrameLength > 0 else {
+        guard aacFrameLength >= AdtsHeader.size else {
             return nil
         }
+    }
+
+    static func encode(type: UInt8, frequency: UInt8, channels: UInt8, length: Int) -> Data {
+        let size = AdtsHeader.size
+        let fullSize = size + length
+        var adts = Data(count: size)
+        adts[0] = AdtsHeader.sync
+        adts[1] = 0xF9
+        adts[2] = (type - 1) << 6 | (frequency << 2) | (channels >> 2)
+        adts[3] = (channels & 3) << 6 | UInt8(fullSize >> 11)
+        adts[4] = UInt8((fullSize & 0x7FF) >> 3)
+        adts[5] = (UInt8(fullSize & 7) << 5) + 0x1F
+        adts[6] = 0xFC
+        return adts
+    }
+
+    func isSameFormatDescription(other: AdtsHeader?) -> Bool {
+        guard let other else {
+            return false
+        }
+        return profile == other.profile
+            && sampleFrequencyIndex == other.sampleFrequencyIndex
+            && channelConfiguration == other.channelConfiguration
     }
 
     func makeFormatDescription() -> CMFormatDescription? {
@@ -100,6 +123,6 @@ struct ADTSReaderIterator: IteratorProtocol {
         defer {
             cursor += Int(header.aacFrameLength)
         }
-        return Int(header.aacFrameLength)
+        return Int(header.aacFrameLength) - AdtsHeader.size
     }
 }

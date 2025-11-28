@@ -19,6 +19,8 @@ protocol MediaDelegate: AnyObject {
     func mediaOnSrtDisconnected(_ reason: String)
     func mediaOnRtmpConnected()
     func mediaOnRtmpDisconnected(_ message: String)
+    func mediaOnRtmpDestinationConnected(_ destination: String)
+    func mediaOnRtmpDestinationDisconnected(_ destination: String)
     func mediaOnRistConnected()
     func mediaOnRistDisconnected()
     func mediaOnAudioMuteChange()
@@ -27,30 +29,38 @@ protocol MediaDelegate: AnyObject {
     func mediaOnFindVideoFormatError(_ findVideoFormatError: String, _ activeFormat: String)
     func mediaOnAttachCameraError()
     func mediaOnCaptureSessionError(_ message: String)
+    func mediaOnBufferedVideoReady(cameraId: UUID)
+    func mediaOnBufferedVideoRemoved(cameraId: UUID)
+    func mediaOnEncoderResolutionChanged(resolution: CGSize)
     func mediaOnRecorderInitSegment(data: Data)
     func mediaOnRecorderDataSegment(segment: RecorderDataSegment)
     func mediaOnRecorderFinished()
     func mediaOnNoTorch()
+    func mediaOnFps(fps: Int)
     func mediaStrlaRelayDestinationAddress(address: String, port: UInt16)
     func mediaSetZoomX(x: Float)
     func mediaSetExposureBias(bias: Float)
-    func mediaSelectedFps(fps: Double, auto: Bool)
+    func mediaSelectedFps(auto: Bool)
     func mediaError(error: Error)
 }
 
 final class Media: NSObject {
-    private var rtmpConnection = RtmpConnection()
-    private var rtmpStream: RtmpStream?
-    private var srtStream: SrtStream?
+    private var rtmpStreams: [RtmpStream] = []
+    private var rtmpStream: RtmpStream? {
+        rtmpStreams.first
+    }
+
+    private var srtStreamNew: SrtStreamNew?
+    private var srtStreamOld: SrtStreamOld?
     private var ristStream: RistStream?
-    private var irlStream: MirlStream?
     private var srtlaClient: SrtlaClient?
-    private var netStream: NetStream?
+    private var processor: Processor?
     private var srtTotalByteCount: Int64 = 0
     private var srtPreviousTotalByteCount: Int64 = 0
     private var srtSpeed: Int64 = 0
     private var currentAudioLevel: Float = defaultAudioLevel
     private var numberOfAudioChannels: Int = 0
+    private var audioSampleRate: Double = 0
     private var srtUrl: String = ""
     private var latency: Int32 = 2000
     private var overheadBandwidth: Int32 = 25
@@ -65,6 +75,8 @@ final class Media: NSObject {
     private var updateTickCount: UInt64 = 0
     private var belaLinesAndActions: ([String], [String])?
     private var srtConnected = false
+    private var newSrt: Bool = false
+    private var canvasSize: CGSize = .init(width: 1920, height: 1080)
 
     func logStatistics() {
         srtlaClient?.logStatistics()
@@ -87,57 +99,59 @@ final class Media: NSObject {
     }
 
     func stopAllNetStreams() {
-        rtmpConnection = RtmpConnection()
         srtStopStream()
         rtmpStopStream()
         ristStopStream()
-        irlStopStream()
-        rtmpStream = nil
-        srtStream = nil
+        rtmpStreams.removeAll()
+        srtStreamNew = nil
+        srtStreamOld = nil
         ristStream = nil
-        irlStream = nil
-        netStream = nil
+        processor = nil
     }
 
     func setNetStream(proto: SettingsStreamProtocol,
                       portrait: Bool,
                       timecodesEnabled: Bool,
-                      builtinAudioDelay: Double)
+                      builtinAudioDelay: Double,
+                      destinations: [SettingsStreamMultiStreamingDestination],
+                      newSrt: Bool)
     {
-        netStream?.stopMixer()
+        self.newSrt = newSrt
+        processor?.stop()
         srtStopStream()
         rtmpStopStream()
         ristStopStream()
-        irlStopStream()
-        rtmpConnection = RtmpConnection()
+        let processor = Processor()
         switch proto {
         case .rtmp:
-            rtmpStream = RtmpStream(connection: rtmpConnection)
-            srtStream = nil
+            rtmpStreams = [RtmpStream(name: "Main", processor: processor, delegate: self)]
+            for destination in destinations where destination.enabled {
+                let rtmpStream = RtmpStream(name: destination.name, processor: processor, delegate: self)
+                rtmpStream.setUrl(destination.url)
+                rtmpStreams.append(rtmpStream)
+            }
+            srtStreamNew = nil
+            srtStreamOld = nil
             ristStream = nil
-            irlStream = nil
-            netStream = rtmpStream
         case .srt:
-            srtStream = SrtStream(timecodesEnabled: timecodesEnabled, delegate: self)
-            rtmpStream = nil
+            if newSrt {
+                srtStreamNew = SrtStreamNew(processor: processor, timecodesEnabled: timecodesEnabled, delegate: self)
+                srtStreamOld = nil
+            } else {
+                srtStreamNew = nil
+                srtStreamOld = SrtStreamOld(processor: processor, timecodesEnabled: timecodesEnabled, delegate: self)
+            }
+            rtmpStreams.removeAll()
             ristStream = nil
-            irlStream = nil
-            netStream = srtStream
         case .rist:
-            ristStream = RistStream(deletate: self)
-            srtStream = nil
-            rtmpStream = nil
-            irlStream = nil
-            netStream = ristStream
-        case .irl:
-            irlStream = MirlStream()
-            srtStream = nil
-            rtmpStream = nil
-            ristStream = nil
-            netStream = irlStream
+            ristStream = RistStream(processor: processor, timecodesEnabled: timecodesEnabled, delegate: self)
+            srtStreamNew = nil
+            srtStreamOld = nil
+            rtmpStreams.removeAll()
         }
-        netStream!.delegate = self
-        netStream!.setVideoOrientation(value: portrait ? .portrait : .landscapeRight)
+        self.processor = processor
+        processor.setDelegate(delegate: self)
+        processor.setVideoOrientation(value: portrait ? .portrait : .landscapeRight)
         attachDefaultAudioDevice(builtinDelay: builtinAudioDelay)
     }
 
@@ -147,6 +161,10 @@ final class Media: NSObject {
 
     func getNumberOfAudioChannels() -> Int {
         return numberOfAudioChannels
+    }
+
+    func getAudioSampleRate() -> Double {
+        return audioSampleRate
     }
 
     func srtStartStream(
@@ -202,7 +220,8 @@ final class Media: NSObject {
             passThrough: !isSrtla,
             mpegtsPacketsPerPacket: mpegtsPacketsPerPacket,
             networkInterfaceNames: networkInterfaceNames,
-            connectionPriorities: connectionPriorities
+            connectionPriorities: connectionPriorities,
+            newSrt: newSrt
         )
         srtSetAdaptiveBitrateAlgorithm(
             targetBitrate: targetBitrate,
@@ -211,7 +230,8 @@ final class Media: NSObject {
     }
 
     func srtStopStream() {
-        srtStream?.close()
+        srtStreamNew?.close()
+        srtStreamOld?.close()
         srtlaClient?.stop()
         srtlaClient = nil
         adaptiveBitrate = nil
@@ -245,43 +265,69 @@ final class Media: NSObject {
         srtlaClient?.setNetworkInterfaceNames(networkInterfaceNames: networkInterfaceNames)
     }
 
-    private func is200MsTick() -> Bool {
-        return updateTickCount % 10 == 0
+    func getNumberOfDestinations() -> Int {
+        if rtmpStream != nil {
+            return rtmpStreams.count
+        } else {
+            return 1
+        }
     }
 
     func updateAdaptiveBitrate(overlay: Bool, relaxed: Bool) -> ([String], [String])? {
         updateTickCount += 1
-        if srtStream != nil {
-            return updateAdaptiveBitrateSrt(overlay: overlay, relaxed: relaxed)
-        } else if let rtmpStream {
-            return updateAdaptiveBitrateRtmp(overlay: overlay, rtmpStream: rtmpStream)
-        } else if let ristStream {
-            return updateAdaptiveBitrateRist(overlay: overlay, ristStream: ristStream)
+        let is200MsTick = updateTickCount % 10 == 0
+        if isSrtStreamActive() {
+            return updateAdaptiveBitrateSrt(overlay: overlay, relaxed: relaxed, is200MsTick: is200MsTick)
+        } else if is200MsTick {
+            if let rtmpStream {
+                return updateAdaptiveBitrateRtmp(overlay: overlay, rtmpStream: rtmpStream)
+            } else if let ristStream {
+                return updateAdaptiveBitrateRist(overlay: overlay, ristStream: ristStream)
+            }
         }
         return nil
     }
 
-    private func updateAdaptiveBitrateSrt(overlay: Bool, relaxed: Bool) -> ([String], [String])? {
-        if adaptiveBitrate is AdaptiveBitrateSrtBela {
-            return updateAdaptiveBitrateSrtBela(overlay: overlay, relaxed: relaxed)
-        } else {
-            return updateAdaptiveBitrateSrtFight(overlay: overlay)
-        }
-    }
-
-    private func updateAdaptiveBitrateSrtBela(overlay: Bool, relaxed: Bool) -> ([String], [String])? {
+    private func updateAdaptiveBitrateSrt(overlay: Bool, relaxed: Bool, is200MsTick: Bool) -> ([String], [String])? {
         guard srtConnected else {
             return nil
         }
-        guard let stats = srtStream?.getPerformanceData() else {
+        if adaptiveBitrate is AdaptiveBitrateSrtBela {
+            return updateAdaptiveBitrateSrtBela(overlay: overlay, relaxed: relaxed, is200MsTick: is200MsTick)
+        } else if is200MsTick {
+            return updateAdaptiveBitrateSrtFight(overlay: overlay)
+        } else {
+            return nil
+        }
+    }
+
+    private func getSrtStats() -> SrtPerformanceData? {
+        return srtStreamNew?.getPerformanceData() ?? srtStreamOld?.getPerformanceData()
+    }
+
+    private func isSrtStreamActive() -> Bool {
+        return srtStreamNew != nil || srtStreamOld != nil
+    }
+
+    private func updateAdaptiveBitrateSrtBela(overlay: Bool,
+                                              relaxed: Bool,
+                                              is200MsTick: Bool) -> ([String], [String])?
+    {
+        guard let stats = getSrtStats() else {
             return nil
         }
         srtDroppedPacketsTotal = stats.pktSndDropTotal
         guard let adaptiveBitrate else {
             return nil
         }
-        // This one blocks if srt_connect() has not returned.
-        guard let sndData = srtStream?.getSndData() else {
+        let sndData: Int32?
+        if let srtStreamOld {
+            // This one blocks if srt_connect() has not returned.
+            sndData = srtStreamOld.getSndData()
+        } else {
+            sndData = stats.pktFlightSize
+        }
+        guard let sndData else {
             return nil
         }
         adaptiveBitrate.update(stats: StreamStats(
@@ -293,7 +339,7 @@ final class Media: NSObject {
             relaxed: relaxed
         ))
         if overlay {
-            if is200MsTick() {
+            if is200MsTick {
                 belaLinesAndActions = ([
                     """
                     R: \(stats.pktRetransTotal) N: \(stats.pktRecvNakTotal) \
@@ -311,10 +357,7 @@ final class Media: NSObject {
     }
 
     private func updateAdaptiveBitrateSrtFight(overlay: Bool) -> ([String], [String])? {
-        guard is200MsTick() else {
-            return nil
-        }
-        guard let stats = srtStream?.getPerformanceData() else {
+        guard let stats = getSrtStats() else {
             return nil
         }
         srtDroppedPacketsTotal = stats.pktSndDropTotal
@@ -359,9 +402,6 @@ final class Media: NSObject {
     }
 
     private func updateAdaptiveBitrateRtmp(overlay: Bool, rtmpStream: RtmpStream) -> ([String], [String])? {
-        guard is200MsTick() else {
-            return nil
-        }
         let stats = rtmpStream.info.stats.value
         adaptiveBitrate?.update(stats: StreamStats(
             rttMs: stats.rttMs,
@@ -396,9 +436,6 @@ final class Media: NSObject {
     }
 
     private func updateAdaptiveBitrateRist(overlay: Bool, ristStream: RistStream) -> ([String], [String])? {
-        guard is200MsTick() else {
-            return nil
-        }
         let stats = ristStream.getStats()
         var rtt = 1000.0
         for stat in stats {
@@ -443,11 +480,11 @@ final class Media: NSObject {
     }
 
     func streamSpeed() -> Int64 {
-        if netStream === rtmpStream {
+        if rtmpStream != nil {
             return Int64(8 * (rtmpStream?.info.currentBytesPerSecond ?? 0))
-        } else if netStream === srtStream {
+        } else if isSrtStreamActive() {
             return 8 * srtSpeed
-        } else if netStream === ristStream {
+        } else if ristStream != nil {
             return Int64(ristStream?.getSpeed() ?? 0)
         } else {
             return 0
@@ -455,15 +492,14 @@ final class Media: NSObject {
     }
 
     func streamTotal() -> Int64 {
-        if netStream === rtmpStream {
-            return rtmpStream?.info.byteCount.value ?? 0
-        } else if netStream === srtStream {
-            return srtTotalByteCount
-        } else if netStream === ristStream {
-            return 0
-        } else {
-            return 0
+        var total: Int64 = 0
+        for stream in rtmpStreams {
+            total += stream.info.byteCount.value
         }
+        if isSrtStreamActive() {
+            return srtTotalByteCount
+        }
+        return total
     }
 
     private func queryContains(queryItems: [URLQueryItem], name: String) -> Bool {
@@ -507,35 +543,30 @@ final class Media: NSObject {
         return urlComponents.url
     }
 
+    private func makeStreamId(url: String) -> String? {
+        return URL(string: url)?.dictionaryFromQuery()["streamid"]
+    }
+
     func rtmpStartStream(url: String,
                          targetBitrate: UInt32,
                          adaptiveBitrate adaptiveBitrateEnabled: Bool)
     {
-        rtmpStream?.setStreamKey(makeRtmpStreamName(url: url))
-        rtmpConnection.addEventListener(
-            .rtmpStatus,
-            selector: #selector(rtmpStatusHandler),
-            observer: self
-        )
         if adaptiveBitrateEnabled {
-            adaptiveBitrate = AdaptiveBitrateSrtFight(
-                targetBitrate: targetBitrate,
-                delegate: self
-            )
+            adaptiveBitrate = AdaptiveBitrateSrtFight(targetBitrate: targetBitrate, delegate: self)
         } else {
             adaptiveBitrate = nil
         }
-        rtmpConnection.connect(makeRtmpUri(url: url))
+        rtmpStream?.setUrl(url)
+        for rtmpStream in rtmpStreams {
+            rtmpStream.connect()
+        }
     }
 
     func rtmpStopStream() {
-        rtmpConnection.removeEventListener(
-            .rtmpStatus,
-            selector: #selector(rtmpStatusHandler),
-            observer: self
-        )
-        rtmpStream?.close()
-        rtmpConnection.disconnect()
+        for rtmpStream in rtmpStreams {
+            rtmpStream.close()
+            rtmpStream.disconnect()
+        }
         adaptiveBitrate = nil
     }
 
@@ -543,27 +574,6 @@ final class Media: NSObject {
         logger.info("stream: Multi track URL \(url)")
         for videoEncoderSetting in videoEncoderSettings {
             logger.info("stream: Multi track video encoder config \(videoEncoderSetting)")
-        }
-    }
-
-    @objc
-    private func rtmpStatusHandler(_ notification: Notification) {
-        guard let event = RtmpEvent.from(notification),
-              let data = event.data as? AsObject,
-              let code = data["code"] as? String
-        else {
-            return
-        }
-        DispatchQueue.main.async {
-            switch RtmpConnectionCode(rawValue: code) {
-            case .connectSuccess:
-                self.rtmpStream?.publish()
-                self.delegate?.mediaOnRtmpConnected()
-            case .connectFailed, .connectClosed:
-                self.delegate?.mediaOnRtmpDisconnected("\(code)")
-            default:
-                break
-            }
         }
     }
 
@@ -588,102 +598,91 @@ final class Media: NSObject {
         ristStream?.stop()
     }
 
-    func irlStartStream() {
-        irlStream?.start()
-    }
-
-    func irlStopStream() {
-        irlStream?.stop()
-    }
-
     func setTorch(on: Bool) {
-        netStream?.setTorch(value: on)
+        processor?.setTorch(value: on)
     }
 
     func setMute(on: Bool) {
-        netStream?.setHasAudio(value: !on)
+        processor?.setHasAudio(value: !on)
     }
 
     func registerEffect(_ effect: VideoEffect) {
-        netStream?.registerVideoEffect(effect)
+        processor?.registerVideoEffect(effect)
     }
 
     func registerEffectBack(_ effect: VideoEffect) {
-        netStream?.registerVideoEffectBack(effect)
+        processor?.registerVideoEffectBack(effect)
     }
 
     func unregisterEffect(_ effect: VideoEffect) {
-        netStream?.unregisterVideoEffect(effect)
+        processor?.unregisterVideoEffect(effect)
     }
 
     func setPendingAfterAttachEffects(effects: [VideoEffect], rotation: Double) {
-        netStream?.setPendingAfterAttachEffects(effects: effects, rotation: rotation)
+        processor?.setPendingAfterAttachEffects(effects: effects, rotation: rotation)
     }
 
     func usePendingAfterAttachEffects() {
-        netStream?.usePendingAfterAttachEffects()
+        processor?.usePendingAfterAttachEffects()
+    }
+
+    func setScreenPreview(enabled: Bool) {
+        processor?.setScreenPreview(enabled: enabled)
     }
 
     func setLowFpsImage(fps: Float) {
-        netStream?.setLowFpsImage(fps: fps)
+        processor?.setLowFpsImage(fps: fps)
     }
 
     func setSceneSwitchTransition(sceneSwitchTransition: SceneSwitchTransition) {
-        netStream?.setSceneSwitchTransition(sceneSwitchTransition: sceneSwitchTransition)
+        processor?.setSceneSwitchTransition(sceneSwitchTransition: sceneSwitchTransition)
     }
 
     func setCameraControls(enabled: Bool) {
-        netStream?.setCameraControls(enabled: enabled)
+        processor?.setCameraControls(enabled: enabled)
     }
 
-    func takeSnapshot(age: Float, onComplete: @escaping (UIImage, CIImage) -> Void) {
-        netStream?.takeSnapshot(age: age, onComplete: onComplete)
+    func takeSnapshot(age: Float, onComplete: @escaping (UIImage, CIImage, CIImage) -> Void) {
+        processor?.takeSnapshot(age: age, onComplete: onComplete)
     }
 
     func setCleanRecordings(enabled: Bool) {
-        netStream?.setCleanRecordings(enabled: enabled)
+        processor?.setCleanRecordings(enabled: enabled)
     }
 
     func setCleanSnapshots(enabled: Bool) {
-        netStream?.setCleanSnapshots(enabled: enabled)
+        processor?.setCleanSnapshots(enabled: enabled)
     }
 
     func setCleanExternalDisplay(enabled: Bool) {
-        netStream?.setCleanExternalDisplay(enabled: enabled)
+        processor?.setCleanExternalDisplay(enabled: enabled)
     }
 
-    func setVideoSize(capture: CGSize, output: CGSize) {
-        netStream?.setVideoSize(capture: capture, output: output)
-        videoEncoderSettings.videoSize = .init(
-            width: Int32(output.width),
-            height: Int32(output.height)
-        )
+    func setVideoSize(capture: CGSize, canvas: CGSize, stream: CMVideoDimensions) {
+        processor?.setVideoSize(capture: capture, canvas: canvas)
+        videoEncoderSettings.videoSize = stream
         commitVideoEncoderSettings()
+        canvasSize = canvas
     }
 
-    func getVideoSize() -> CGSize {
-        let size = videoEncoderSettings.videoSize
-        return CGSize(width: CGFloat(size.width), height: CGFloat(size.height))
+    func getCanvasSize() -> CGSize {
+        return canvasSize
     }
 
-    func setStreamFps(fps: Int) {
-        netStream?.setFrameRate(value: Double(fps))
-    }
-
-    func setStreamPreferAutoFps(value: Bool) {
-        netStream?.setPreferFrameRate(value: value)
+    func setFps(fps: Int, preferAutoFps: Bool) {
+        processor?.setFps(value: Double(fps), preferAutoFps: preferAutoFps)
     }
 
     func setColorSpace(colorSpace: AVCaptureColorSpace, onComplete: @escaping () -> Void) {
-        netStream?.setColorSpace(colorSpace: colorSpace, onComplete: onComplete)
+        processor?.setColorSpace(colorSpace: colorSpace, onComplete: onComplete)
     }
 
     private func commitVideoEncoderSettings() {
-        netStream?.setVideoEncoderSettings(settings: videoEncoderSettings)
+        processor?.setVideoEncoderSettings(settings: videoEncoderSettings)
     }
 
     private func commitAudioEncoderSettings() {
-        netStream?.setAudioEncoderSettings(settings: audioEncoderSettings)
+        processor?.setAudioEncoderSettings(settings: audioEncoderSettings)
     }
 
     func updateVideoStreamBitrate(bitrate: UInt32) {
@@ -694,13 +693,11 @@ final class Media: NSObject {
     }
 
     func getVideoStreamBitrate(bitrate: UInt32) -> UInt32 {
-        var bitRate: UInt32
         if let adaptiveBitrate {
-            bitRate = adaptiveBitrate.getCurrentBitrate()
+            return adaptiveBitrate.getCurrentBitrate()
         } else {
-            bitRate = bitrate
+            return bitrate
         }
-        return bitRate
     }
 
     func setVideoStreamBitrate(bitrate: UInt32) {
@@ -745,15 +742,15 @@ final class Media: NSObject {
     func setAudioChannelsMap(channelsMap: [Int: Int]) {
         audioEncoderSettings.channelsMap = channelsMap
         commitAudioEncoderSettings()
-        netStream?.setAudioChannelsMap(map: channelsMap)
+        processor?.setAudioChannelsMap(map: channelsMap)
     }
 
     func setSpeechToText(enabled: Bool) {
-        netStream?.setSpeechToText(enabled: enabled)
+        processor?.setSpeechToText(enabled: enabled)
     }
 
     func setVideoOrientation(value: AVCaptureVideoOrientation) {
-        netStream?.setVideoOrientation(value: value)
+        processor?.setVideoOrientation(value: value)
     }
 
     func setCameraZoomLevel(device: AVCaptureDevice?, level: Float, rate: Float?) -> Float? {
@@ -792,7 +789,7 @@ final class Media: NSObject {
     }
 
     func attachCamera(params: VideoUnitAttachParams, onSuccess: (() -> Void)? = nil) {
-        netStream?.attachCamera(
+        processor?.attachCamera(
             params: params,
             onError: {
                 self.delegate?.mediaError(error: $0)
@@ -809,59 +806,62 @@ final class Media: NSObject {
         devices: CaptureDevices,
         builtinDelay: Double,
         cameraPreviewLayer: AVCaptureVideoPreviewLayer,
+        showCameraPreview: Bool,
         externalDisplayPreview: Bool,
         cameraId: UUID,
         ignoreFramesAfterAttachSeconds: Double,
-        fillFrame: Bool
+        fillFrame: Bool,
+        isLandscapeStreamAndPortraitUi: Bool
     ) {
         let params = VideoUnitAttachParams(devices: devices,
                                            builtinDelay: builtinDelay,
                                            cameraPreviewLayer: cameraPreviewLayer,
-                                           showCameraPreview: false,
+                                           showCameraPreview: showCameraPreview,
                                            externalDisplayPreview: externalDisplayPreview,
                                            bufferedVideo: cameraId,
                                            preferredVideoStabilizationMode: .off,
                                            isVideoMirrored: false,
                                            ignoreFramesAfterAttachSeconds: ignoreFramesAfterAttachSeconds,
-                                           fillFrame: fillFrame)
-        netStream?.attachCamera(params: params)
+                                           fillFrame: fillFrame,
+                                           isLandscapeStreamAndPortraitUi: isLandscapeStreamAndPortraitUi)
+        processor?.attachCamera(params: params)
     }
 
     func attachBufferedAudio(cameraId: UUID?) {
         let params = AudioUnitAttachParams(device: nil, builtinDelay: 0, bufferedAudio: cameraId)
-        netStream?.attachAudio(params: params)
+        processor?.attachAudio(params: params)
     }
 
     func addBufferedAudio(cameraId: UUID, name: String, latency: Double) {
-        netStream?.addBufferedAudio(cameraId: cameraId, name: name, latency: latency)
+        processor?.addBufferedAudio(cameraId: cameraId, name: name, latency: latency)
     }
 
     func removeBufferedAudio(cameraId: UUID) {
-        netStream?.removeBufferedAudio(cameraId: cameraId)
+        processor?.removeBufferedAudio(cameraId: cameraId)
     }
 
     func appendBufferedAudioSampleBuffer(cameraId: UUID, sampleBuffer: CMSampleBuffer) {
-        netStream?.appendBufferedAudioSampleBuffer(cameraId: cameraId, sampleBuffer)
+        processor?.appendBufferedAudioSampleBuffer(cameraId: cameraId, sampleBuffer)
     }
 
     func setBufferedAudioTargetLatency(cameraId: UUID, latency: Double) {
-        netStream?.setBufferedAudioTargetLatency(cameraId: cameraId, latency)
+        processor?.setBufferedAudioTargetLatency(cameraId: cameraId, latency)
     }
 
     func addBufferedVideo(cameraId: UUID, name: String, latency: Double) {
-        netStream?.addBufferedVideo(cameraId: cameraId, name: name, latency: latency)
+        processor?.addBufferedVideo(cameraId: cameraId, name: name, latency: latency)
     }
 
     func removeBufferedVideo(cameraId: UUID) {
-        netStream?.removeBufferedVideo(cameraId: cameraId)
+        processor?.removeBufferedVideo(cameraId: cameraId)
     }
 
     func appendBufferedVideoSampleBuffer(cameraId: UUID, sampleBuffer: CMSampleBuffer) {
-        netStream?.appendBufferedVideoSampleBuffer(cameraId: cameraId, sampleBuffer)
+        processor?.appendBufferedVideoSampleBuffer(cameraId: cameraId, sampleBuffer)
     }
 
     func setBufferedVideoTargetLatency(cameraId: UUID, latency: Double) {
-        netStream?.setBufferedVideoTargetLatency(cameraId: cameraId, latency)
+        processor?.setBufferedVideoTargetLatency(cameraId: cameraId, latency)
     }
 
     func attachDefaultAudioDevice(builtinDelay: Double) {
@@ -870,13 +870,13 @@ final class Media: NSObject {
             builtinDelay: builtinDelay,
             bufferedAudio: nil
         )
-        netStream?.attachAudio(params: params) {
+        processor?.attachAudio(params: params) {
             self.delegate?.mediaError(error: $0)
         }
     }
 
-    func getNetStream() -> NetStream? {
-        return netStream
+    func getProcessor() -> Processor? {
+        return processor
     }
 
     func startRecording(
@@ -886,7 +886,7 @@ final class Media: NSObject {
         keyFrameInterval: Int?,
         audioBitrate: Int?
     ) {
-        netStream?.startRecording(url: url,
+        processor?.startRecording(url: url,
                                   replay: replay,
                                   audioSettings: makeAudioCompressionSettings(audioBitrate: audioBitrate),
                                   videoSettings: makeVideoCompressionSettings(
@@ -897,11 +897,11 @@ final class Media: NSObject {
     }
 
     func setRecordUrl(url: URL?) {
-        netStream?.setUrl(url: url)
+        processor?.setUrl(url: url)
     }
 
     func setReplayBuffering(enabled: Bool) {
-        netStream?.setReplayBuffering(enabled: enabled)
+        processor?.setReplayBuffering(enabled: enabled)
     }
 
     private func makeVideoCompressionSettings(videoCodec: SettingsStreamCodec,
@@ -946,7 +946,7 @@ final class Media: NSObject {
     }
 
     func stopRecording() {
-        netStream?.stopRecording()
+        processor?.stopRecording()
     }
 
     func getFailedVideoEffect() -> String? {
@@ -954,8 +954,8 @@ final class Media: NSObject {
     }
 }
 
-extension Media: NetStreamDelegate {
-    func stream(_: NetStream, audioLevel: Float, numberOfAudioChannels: Int) {
+extension Media: ProcessorDelegate {
+    func stream(audioLevel: Float, numberOfAudioChannels: Int, sampleRate: Double) {
         DispatchQueue.main.async {
             if becameMuted(old: self.currentAudioLevel, new: audioLevel) || becameUnmuted(
                 old: self.currentAudioLevel,
@@ -967,34 +967,47 @@ extension Media: NetStreamDelegate {
                 self.currentAudioLevel = audioLevel
             }
             self.numberOfAudioChannels = numberOfAudioChannels
+            self.audioSampleRate = sampleRate
         }
     }
 
-    func streamVideo(_: NetStream, presentationTimestamp _: Double) {}
+    func streamVideo(presentationTimestamp _: Double) {}
 
-    func streamVideo(_: NetStream, failedEffect: String?) {
+    func streamVideo(failedEffect: String?) {
         DispatchQueue.main.async {
             self.failedVideoEffect = failedEffect
         }
     }
 
-    func streamVideo(_: NetStream, lowFpsImage: Data?, frameNumber: UInt64) {
+    func streamVideo(lowFpsImage: Data?, frameNumber: UInt64) {
         delegate?.mediaOnLowFpsImage(lowFpsImage, frameNumber)
     }
 
-    func streamVideo(_: NetStream, findVideoFormatError: String, activeFormat: String) {
+    func streamVideo(findVideoFormatError: String, activeFormat: String) {
         delegate?.mediaOnFindVideoFormatError(findVideoFormatError, activeFormat)
     }
 
-    func streamVideoAttachCameraError(_: NetStream) {
+    func streamVideoAttachCameraError() {
         delegate?.mediaOnAttachCameraError()
     }
 
-    func streamVideoCaptureSessionError(_: NetStream, _ message: String) {
+    func streamVideoCaptureSessionError(_ message: String) {
         delegate?.mediaOnCaptureSessionError(message)
     }
 
-    func streamAudio(_: NetStream, sampleBuffer: CMSampleBuffer) {
+    func streamVideoBufferedVideoReady(cameraId: UUID) {
+        delegate?.mediaOnBufferedVideoReady(cameraId: cameraId)
+    }
+
+    func streamVideoBufferedVideoRemoved(cameraId: UUID) {
+        delegate?.mediaOnBufferedVideoRemoved(cameraId: cameraId)
+    }
+
+    func streamVideoEncoderResolution(resolution: CGSize) {
+        delegate?.mediaOnEncoderResolutionChanged(resolution: resolution)
+    }
+
+    func streamAudio(sampleBuffer: CMSampleBuffer) {
         delegate?.mediaOnAudioBuffer(sampleBuffer)
     }
 
@@ -1014,6 +1027,10 @@ extension Media: NetStreamDelegate {
         delegate?.mediaOnNoTorch()
     }
 
+    func streamVideoFps(fps: Int) {
+        delegate?.mediaOnFps(fps: fps)
+    }
+
     func streamSetZoomX(x: Float) {
         delegate?.mediaSetZoomX(x: x)
     }
@@ -1022,42 +1039,47 @@ extension Media: NetStreamDelegate {
         delegate?.mediaSetExposureBias(bias: bias)
     }
 
-    func streamSelectedFps(fps: Double, auto: Bool) {
-        delegate?.mediaSelectedFps(fps: fps, auto: auto)
+    func streamSelectedFps(auto: Bool) {
+        delegate?.mediaSelectedFps(auto: auto)
     }
 }
 
 extension Media: SrtlaDelegate {
     func srtlaReady(port: UInt16) {
-        netStreamLockQueue.async {
-            do {
-                try self.srtStream?.open(self.makeLocalhostSrtUrl(
-                    url: self.srtUrl,
-                    port: port,
-                    latency: self.latency,
-                    overheadBandwidth: self.overheadBandwidth,
-                    maximumBandwidthFollowInput: self.maximumBandwidthFollowInput
-                )) { [weak self] data in
-                    guard let self else {
-                        return false
-                    }
-                    if let srtla = self.srtlaClient {
-                        srtlaClientQueue.async {
-                            srtla.handleLocalPacket(packet: data)
+        processorControlQueue.async {
+            if self.srtStreamOld != nil {
+                do {
+                    try self.srtStreamOld?.open(self.makeLocalhostSrtUrl(
+                        url: self.srtUrl,
+                        port: port,
+                        latency: self.latency,
+                        overheadBandwidth: self.overheadBandwidth,
+                        maximumBandwidthFollowInput: self.maximumBandwidthFollowInput
+                    )) { [weak self] data in
+                        guard let self else {
+                            return false
                         }
+                        if let srtla = self.srtlaClient {
+                            srtlaClientQueue.async {
+                                srtla.handleLocalPacket(packet: data)
+                            }
+                        }
+                        return true
                     }
-                    return true
+                    DispatchQueue.main.async {
+                        self.srtConnected = true
+                        self.delegate?.mediaOnSrtConnected()
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        self.delegate?.mediaOnSrtDisconnected(
+                            String(localized: "SRT connect failed with \(error.localizedDescription)")
+                        )
+                    }
                 }
-                DispatchQueue.main.async {
-                    self.srtConnected = true
-                    self.delegate?.mediaOnSrtConnected()
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.delegate?.mediaOnSrtDisconnected(
-                        String(localized: "SRT connect failed with \(error.localizedDescription)")
-                    )
-                }
+            } else {
+                self.srtStreamNew?.open(streamId: self.makeStreamId(url: self.srtUrl),
+                                        latency: UInt16(self.latency))
             }
         }
     }
@@ -1073,6 +1095,10 @@ extension Media: SrtlaDelegate {
         DispatchQueue.main.async {
             self.delegate?.mediaStrlaRelayDestinationAddress(address: address, port: port)
         }
+    }
+
+    func srtlaReceivedPacket(packet: Data) {
+        srtStreamNew?.inputPacket(packet: packet)
     }
 }
 
@@ -1099,11 +1125,56 @@ extension Media: RistStreamDelegate {
     }
 }
 
-extension Media: SrtStreamDelegate {
+extension Media: SrtStreamNewDelegate {
+    func srtStreamConnected() {
+        DispatchQueue.main.async {
+            self.srtConnected = true
+            self.delegate?.mediaOnSrtConnected()
+        }
+    }
+
+    func srtStreamDisconnected() {
+        DispatchQueue.main.async {
+            self.srtConnected = false
+        }
+        srtlaError(message: String(localized: "SRT disconnected"))
+    }
+
+    func srtStreamOutput(packet: Data) {
+        srtlaClient?.handleLocalPacket(packet: packet)
+    }
+}
+
+extension Media: SrtStreamOldDelegate {
     func srtStreamError() {
         DispatchQueue.main.async {
             self.srtConnected = false
         }
         srtlaError(message: String(localized: "SRT disconnected"))
+    }
+}
+
+extension Media: RtmpStreamDelegate {
+    func rtmpStreamStatus(_ rtmpStream: RtmpStream, code: String) {
+        DispatchQueue.main.async {
+            switch RtmpConnectionCode(rawValue: code) {
+            case .connectSuccess:
+                rtmpStream.publish()
+                if rtmpStream === self.rtmpStream {
+                    self.delegate?.mediaOnRtmpConnected()
+                } else {
+                    self.delegate?.mediaOnRtmpDestinationConnected(rtmpStream.name)
+                }
+            case .connectFailed, .connectClosed:
+                if rtmpStream === self.rtmpStream {
+                    self.delegate?.mediaOnRtmpDisconnected("\(code)")
+                } else {
+                    self.delegate?.mediaOnRtmpDestinationDisconnected(rtmpStream.name)
+                    rtmpStream.reconnectSoon()
+                }
+            default:
+                break
+            }
+        }
     }
 }

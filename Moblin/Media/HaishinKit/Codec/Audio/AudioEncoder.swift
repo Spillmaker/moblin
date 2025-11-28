@@ -2,37 +2,71 @@ import AVFoundation
 
 protocol AudioCodecDelegate: AnyObject {
     func audioCodecOutputFormat(_ format: AVAudioFormat)
-    func audioCodecOutputBuffer(_ buffer: AVAudioBuffer, _ presentationTimeStamp: CMTime)
+    func audioCodecOutputBuffer(_ buffer: AVAudioCompressedBuffer, _ presentationTimeStamp: CMTime)
 }
 
 class AudioEncoder {
     weak var delegate: (any AudioCodecDelegate)?
-    private var isRunning: Atomic<Bool> = .init(false)
+    private var isRunning = false
     private let lockQueue: DispatchQueue
     private var ringBuffer: AudioEncoderRingBuffer?
     private var audioConverter: AVAudioConverter?
-
-    var settings = AudioEncoderSettings() {
-        didSet {
-            guard let audioConverter else {
-                return
-            }
-            settings.apply(audioConverter, oldValue: oldValue)
-        }
-    }
-
-    var inSourceFormat: AudioStreamBasicDescription? {
-        didSet {
-            guard var inSourceFormat, inSourceFormat != oldValue else {
-                return
-            }
-            ringBuffer = .init(&inSourceFormat)
-            audioConverter = makeAudioConverter(&inSourceFormat)
-        }
-    }
+    private var settings = AudioEncoderSettings()
+    private var bitrate: Atomic<Int> = .init(128_000)
+    private var sampleRate: Atomic<Double?> = .init(nil)
+    private var inSourceFormat: AudioStreamBasicDescription?
 
     init(lockQueue: DispatchQueue) {
         self.lockQueue = lockQueue
+    }
+
+    func startRunning() {
+        lockQueue.async {
+            self.startRunningInternal()
+        }
+    }
+
+    func stopRunning() {
+        lockQueue.async {
+            self.stopRunningInternal()
+        }
+    }
+
+    func appendSampleBuffer(_ sampleBuffer: CMSampleBuffer, _ presentationTimeStamp: CMTime) {
+        guard isRunning, let audioConverter, let ringBuffer else {
+            return
+        }
+        try? sampleBuffer.withAudioBufferList { audioBufferList, _ in
+            ringBuffer.setWorkingSampleBuffer(audioBufferList, presentationTimeStamp)
+            while let (outputBuffer, presentationTimeStamp) = ringBuffer.createOutputBuffer() {
+                convertBuffer(audioConverter, outputBuffer, presentationTimeStamp)
+            }
+        }
+    }
+
+    func setSettings(settings: AudioEncoderSettings) {
+        lockQueue.async {
+            self.settings = settings
+            self.audioConverter?.setBitrate(to: settings.bitrate)
+            self.bitrate.mutate { $0 = settings.bitrate }
+        }
+    }
+
+    func setInputSourceFormat(_ newInSourceFormat: AudioStreamBasicDescription?) {
+        guard var newInSourceFormat, newInSourceFormat != inSourceFormat else {
+            return
+        }
+        ringBuffer = .init(&newInSourceFormat, numSamplesPerBuffer: samplesPerBuffer())
+        audioConverter = makeAudioConverter(&newInSourceFormat)
+        sampleRate.mutate { $0 = newInSourceFormat.mSampleRate }
+    }
+
+    func getBitrate() -> Int {
+        return bitrate.value
+    }
+
+    func getSampleRate() -> Double? {
+        return sampleRate.value
     }
 
     static func makeAudioFormat(_ basicDescription: inout AudioStreamBasicDescription) -> AVAudioFormat? {
@@ -42,49 +76,34 @@ class AudioEncoder {
         )
     }
 
+    private func samplesPerBuffer() -> Int {
+        switch settings.format {
+        case .aac:
+            return 1024
+        case .opus:
+            return 960
+        }
+    }
+
+    private func startRunningInternal() {
+        if let audioConverter {
+            delegate?.audioCodecOutputFormat(audioConverter.outputFormat)
+        }
+        isRunning = true
+    }
+
+    private func stopRunningInternal() {
+        inSourceFormat = nil
+        audioConverter = nil
+        ringBuffer = nil
+        isRunning = false
+    }
+
     private static func makeChannelLayout(_ numberOfChannels: UInt32) -> AVAudioChannelLayout? {
         guard numberOfChannels > 2 else {
             return nil
         }
         return AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | numberOfChannels)
-    }
-
-    func appendSampleBuffer(_ sampleBuffer: CMSampleBuffer, _ presentationTimeStamp: CMTime) {
-        guard isRunning.value else {
-            return
-        }
-        switch settings.format {
-        case .aac:
-            appendSampleBufferOutputAac(sampleBuffer, presentationTimeStamp)
-        case .opus:
-            appendSampleBufferOutputOpus(sampleBuffer, presentationTimeStamp)
-        }
-    }
-
-    private func appendSampleBufferOutputAac(_ sampleBuffer: CMSampleBuffer, _ presentationTimeStamp: CMTime) {
-        guard let audioConverter, let ringBuffer else {
-            return
-        }
-        var offset = 0
-        while offset < sampleBuffer.numSamples {
-            offset += ringBuffer.appendSampleBuffer(sampleBuffer, presentationTimeStamp, offset)
-            if let (outputBuffer, latestPresentationTimeStamp) = ringBuffer.getReadyOutputBuffer() {
-                convertBuffer(audioConverter, outputBuffer, latestPresentationTimeStamp)
-            }
-        }
-    }
-
-    private func appendSampleBufferOutputOpus(_ sampleBuffer: CMSampleBuffer, _ presentationTimeStamp: CMTime) {
-        guard let audioConverter, let ringBuffer else {
-            return
-        }
-        var offset = 0
-        while offset < sampleBuffer.numSamples {
-            offset += ringBuffer.appendSampleBuffer(sampleBuffer, presentationTimeStamp, offset)
-            if let (outputBuffer, latestPresentationTimeStamp) = ringBuffer.getReadyOutputBuffer() {
-                convertBuffer(audioConverter, outputBuffer, latestPresentationTimeStamp)
-            }
-        }
     }
 
     private func convertBuffer(
@@ -123,29 +142,23 @@ class AudioEncoder {
             numberOfOutputChannels: Int(outputFormat.channelCount),
             outputToInputChannelsMap: settings.channelsMap
         )
-        settings.apply(converter, oldValue: nil)
+        converter.setBitrate(to: settings.bitrate)
         delegate?.audioCodecOutputFormat(outputFormat)
         return converter
     }
+}
 
-    func startRunning() {
-        lockQueue.async {
-            guard !self.isRunning.value else {
-                return
-            }
-            if let audioConverter = self.audioConverter {
-                self.delegate?.audioCodecOutputFormat(audioConverter.outputFormat)
-            }
-            self.isRunning.mutate { $0 = true }
+extension AVAudioConverter {
+    func setBitrate(to bitrate: Int) {
+        guard bitrate != bitRate else {
+            return
         }
-    }
-
-    func stopRunning() {
-        lockQueue.async {
-            self.inSourceFormat = nil
-            self.audioConverter = nil
-            self.ringBuffer = nil
-            self.isRunning.mutate { $0 = false }
+        guard let bitrates = applicableEncodeBitRates else {
+            return
         }
+        let minBitrate = bitrates.min(by: { $0.intValue < $1.intValue })?.intValue ?? bitrate
+        let maxBitrate = bitrates.max(by: { $0.intValue < $1.intValue })?.intValue ?? bitrate
+        bitRate = bitrate.clamped(to: minBitrate ... maxBitrate)
+        logger.debug("audio-encoder: \(bitRate), maximum: \(maxBitrate)")
     }
 }

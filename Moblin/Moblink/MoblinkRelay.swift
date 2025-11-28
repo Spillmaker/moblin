@@ -3,6 +3,24 @@ import Network
 import SwiftUI
 
 private let moblinkRelayQueue = DispatchQueue(label: "com.eerimoq.moblink-relay")
+private let relayIdKey = "srtlaRelayId"
+private var relayId: String = ""
+
+func moblinkRelayLoadRelayId() {
+    relayId = UserDefaults.standard.string(forKey: relayIdKey) ?? ""
+    if relayId.isEmpty {
+        moblinkRelayResetId()
+    }
+}
+
+func getMoblinkRelayId() -> String {
+    return relayId
+}
+
+func moblinkRelayResetId() {
+    relayId = UUID().uuidString
+    UserDefaults.standard.set(relayId, forKey: relayIdKey)
+}
 
 enum MoblinkRelayState: String {
     case waitingForStreamers = "Waiting for streamers"
@@ -24,7 +42,7 @@ private enum RelayState: String {
 
 protocol MoblinkRelayDelegate: AnyObject {
     func moblinkRelayNewState(state: MoblinkRelayState)
-    func moblinkRelayGetBatteryPercentage() -> Int
+    func moblinkRelayGetStatus() -> (Int?, MoblinkThermalState?)
 }
 
 private class Relay: NSObject {
@@ -215,10 +233,13 @@ private class Relay: NSObject {
 
     private func handleStatus(id: Int) {
         var batteryPercentage: Int?
-        if isMain {
-            batteryPercentage = delegate?.moblinkRelayGetBatteryPercentage()
+        var thermalState: MoblinkThermalState?
+        if isMain, let delegate {
+            (batteryPercentage, thermalState) = delegate.moblinkRelayGetStatus()
         }
-        send(message: .response(id: id, result: .ok, data: .status(batteryPercentage: batteryPercentage)))
+        send(message: .response(id: id,
+                                result: .ok,
+                                data: .status(batteryPercentage: batteryPercentage, thermalState: thermalState)))
     }
 
     private func stopTunnel() {
@@ -288,8 +309,7 @@ private class Relay: NSObject {
     }
 
     private func handlePacketFromStreamer(packet: Data) {
-        destinationConnection?.send(content: packet, completion: .contentProcessed { _ in
-        })
+        destinationConnection?.send(content: packet, completion: .idempotent)
     }
 
     private func receiveDestinationPacket() {
@@ -309,8 +329,7 @@ private class Relay: NSObject {
     }
 
     private func handlePacketFromDestination(packet: Data) {
-        streamerConnection?.send(content: packet, completion: .contentProcessed { _ in
-        })
+        streamerConnection?.send(content: packet, completion: .idempotent)
     }
 }
 
@@ -335,17 +354,12 @@ class MoblinkRelay: NSObject {
     private var relays: [Relay] = []
     private let networkPathMonitor = NWPathMonitor()
     private var started = false
-    @AppStorage("srtlaRelayId") var id = ""
 
     init(name: String, streamerUrl: URL, password: String, delegate: MoblinkRelayDelegate) {
         self.name = name
         self.streamerUrl = streamerUrl
         self.password = password
         self.delegate = delegate
-        super.init()
-        if id.isEmpty {
-            id = UUID().uuidString
-        }
     }
 
     func start() {
@@ -362,21 +376,6 @@ class MoblinkRelay: NSObject {
             relay.stop()
         }
         relays.removeAll()
-    }
-
-    private func makeRelayId(_ interface: NWInterface) -> String {
-        if let value = Int(id.suffix(6), radix: 16) {
-            return id.prefix(30) + String(format: "%06X", (value + interface.index) & 0xFFFFFF)
-        }
-        return id
-    }
-
-    private func makeRelayName(_ interface: NWInterface) -> String {
-        if interface.type == .cellular {
-            return name
-        } else {
-            return "\(name)-\(interface.index)"
-        }
     }
 
     func relayStateChanged() {
@@ -402,12 +401,27 @@ class MoblinkRelay: NSObject {
         delegate?.moblinkRelayNewState(state: state)
     }
 
+    private func makeRelayId(_ interface: NWInterface) -> String {
+        if let value = Int(relayId.suffix(6), radix: 16) {
+            return relayId.prefix(30) + String(format: "%06X", (value + interface.index) & 0xFFFFFF)
+        }
+        return relayId
+    }
+
+    private func makeRelayName(_ interface: NWInterface) -> String {
+        if interface.type == .cellular {
+            return name
+        } else {
+            return "\(name)-\(interface.index)"
+        }
+    }
+
     private func handleNetworkPathUpdate(path: NWPath) {
         guard started else {
             return
         }
         var relays: [Relay] = []
-        for interface in path.availableInterfaces
+        for interface in path.uniqueAvailableInterfaces()
             where interface.type == .cellular || interface.type == .wiredEthernet
         {
             if let relay = self.relays.first(where: { $0.destinationInterface == interface }) {

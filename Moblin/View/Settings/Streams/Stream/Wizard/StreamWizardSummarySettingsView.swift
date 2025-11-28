@@ -2,102 +2,115 @@ import SwiftUI
 
 private struct PlatformView: View {
     @EnvironmentObject private var model: Model
+    @ObservedObject var createStreamWizard: CreateStreamWizard
 
     var body: some View {
-        if model.wizardPlatform == .twitch {
+        switch createStreamWizard.platform {
+        case .twitch:
             Section {
                 TextValueView(
                     name: String(localized: "Channel name"),
-                    value: model.wizardTwitchChannelName
+                    value: createStreamWizard.twitchChannelName
                 )
-                TextValueView(name: String(localized: "Channel id"), value: model.wizardTwitchChannelId)
+                TextValueView(name: String(localized: "Channel id"), value: createStreamWizard.twitchChannelId)
             } header: {
                 Text("Twitch")
             }
-        } else if model.wizardPlatform == .kick {
+        case .kick:
             Section {
-                TextValueView(name: String(localized: "Channel name"), value: model.wizardKickChannelName)
+                TextValueView(name: String(localized: "Channel name"), value: createStreamWizard.kickChannelName)
             } header: {
                 Text("Kick")
             }
-        } else if model.wizardPlatform == .youTube {
+        case .youTube:
             Section {
-                TextValueView(name: String(localized: "Video id"), value: model.wizardYouTubeVideoId)
+                TextValueView(name: String(localized: "Channel handle"), value: createStreamWizard.youTubeHandle)
             } header: {
                 Text("YouTube")
             }
-        } else if model.wizardPlatform == .afreecaTv {
+        case .soop:
             Section {
                 TextValueView(
                     name: String(localized: "Channel name"),
-                    value: model.wizardAfreecaTvChannelName
+                    value: createStreamWizard.soopChannelName
                 )
-                TextValueView(name: String(localized: "Video id"), value: model.wizardAfreecsTvCStreamId)
+                TextValueView(name: String(localized: "Video id"), value: createStreamWizard.soopStreamId)
             } header: {
-                Text("AfreecaTV")
+                Text("SOOP")
             }
+        case .custom:
+            EmptyView()
+        case .obs:
+            EmptyView()
         }
     }
 }
 
 private struct NetworkSetupDirectView: View {
     @EnvironmentObject private var model: Model
+    @ObservedObject var createStreamWizard: CreateStreamWizard
 
     var body: some View {
-        if model.wizardPlatform == .twitch {
+        switch createStreamWizard.platform {
+        case .twitch:
             TextValueView(
                 name: String(localized: "Nearby ingest endpoint"),
-                value: model.wizardDirectIngest
+                value: createStreamWizard.directIngest
             )
             TextValueView(
                 name: String(localized: "Stream key"),
-                value: model.wizardDirectStreamKey
+                value: createStreamWizard.directStreamKey
             )
-        } else if model.wizardPlatform == .kick {
-            TextValueView(name: String(localized: "Stream URL"), value: model.wizardDirectIngest)
+        case .kick:
+            TextValueView(name: String(localized: "Stream URL"), value: createStreamWizard.directIngest)
             TextValueView(
                 name: String(localized: "Stream key"),
-                value: model.wizardDirectStreamKey
+                value: createStreamWizard.directStreamKey
             )
-        } else if model.wizardPlatform == .youTube {
-            TextValueView(name: String(localized: "Stream URL"), value: model.wizardDirectIngest)
+        case .youTube:
+            TextValueView(name: String(localized: "Stream URL"), value: createStreamWizard.directIngest)
             TextValueView(
                 name: String(localized: "Stream key"),
-                value: model.wizardDirectStreamKey
+                value: createStreamWizard.directStreamKey
             )
-        } else if model.wizardPlatform == .afreecaTv {
-            TextValueView(name: String(localized: "Stream URL"), value: model.wizardDirectIngest)
+        case .soop:
+            TextValueView(name: String(localized: "Stream URL"), value: createStreamWizard.directIngest)
             TextValueView(
                 name: String(localized: "Stream key"),
-                value: model.wizardDirectStreamKey
+                value: createStreamWizard.directStreamKey
             )
+        case .custom:
+            EmptyView()
+        case .obs:
+            EmptyView()
         }
     }
 }
 
 private struct NetworkSetupView: View {
     @EnvironmentObject private var model: Model
+    @ObservedObject var createStreamWizard: CreateStreamWizard
 
     var body: some View {
-        if model.wizardNetworkSetup == .obs {
+        if createStreamWizard.networkSetup == .obs {
             Section {
                 TextValueView(
                     name: String(localized: "IP address or domain name"),
-                    value: model.wizardObsAddress
+                    value: createStreamWizard.obsAddress
                 )
-                TextValueView(name: String(localized: "Port"), value: model.wizardObsPort)
+                TextValueView(name: String(localized: "Port"), value: createStreamWizard.obsPort)
             } header: {
                 Text("OBS")
             }
-        } else if model.wizardNetworkSetup == .belaboxCloudObs {
+        } else if createStreamWizard.networkSetup == .belaboxCloudObs {
             Section {
-                TextValueView(name: String(localized: "Ingest URL"), value: model.wizardBelaboxUrl)
+                TextValueView(name: String(localized: "Ingest URL"), value: createStreamWizard.belaboxUrl)
             } header: {
                 Text("BELABOX cloud")
             }
-        } else if model.wizardNetworkSetup == .direct {
+        } else if createStreamWizard.networkSetup == .direct {
             Section {
-                NetworkSetupDirectView()
+                NetworkSetupDirectView(createStreamWizard: createStreamWizard)
             } header: {
                 Text("Direct")
             }
@@ -107,53 +120,54 @@ private struct NetworkSetupView: View {
 
 struct StreamWizardSummarySettingsView: View {
     @EnvironmentObject private var model: Model
+    @ObservedObject var createStreamWizard: CreateStreamWizard
 
     var body: some View {
         Form {
-            PlatformView()
-            NetworkSetupView()
-            if model.wizardPlatform == .custom || model.wizardNetworkSetup == .myServers {
-                if model.wizardCustomProtocol == .srt {
+            PlatformView(createStreamWizard: createStreamWizard)
+            NetworkSetupView(createStreamWizard: createStreamWizard)
+            if createStreamWizard.platform == .custom || createStreamWizard.networkSetup == .myServers {
+                if createStreamWizard.customProtocol == .srt {
                     Section {
-                        TextValueView(name: String(localized: "URL"), value: model.wizardCustomSrtUrl)
+                        TextValueView(name: String(localized: "URL"), value: createStreamWizard.customSrtUrl)
                         TextValueView(
                             name: String(localized: "Stream id"),
-                            value: model.wizardCustomSrtStreamId
+                            value: createStreamWizard.customSrtStreamId
                         )
                     } header: {
                         Text("SRT(LA)")
                     }
-                } else if model.wizardCustomProtocol == .rtmp {
+                } else if createStreamWizard.customProtocol == .rtmp {
                     Section {
-                        TextValueView(name: String(localized: "URL"), value: model.wizardCustomRtmpUrl)
+                        TextValueView(name: String(localized: "URL"), value: createStreamWizard.customRtmpUrl)
                         TextValueView(
                             name: String(localized: "Stream key"),
-                            value: model.wizardCustomRtmpStreamKey
+                            value: createStreamWizard.customRtmpStreamKey
                         )
                     } header: {
                         Text("RTMP(S)")
                     }
                 }
             }
-            if model.wizardPlatform != .custom {
-                if model.wizardNetworkSetup != .direct {
-                    if model.wizardObsRemoteControlEnabled {
+            if createStreamWizard.platform != .custom {
+                if createStreamWizard.networkSetup != .direct {
+                    if createStreamWizard.obsRemoteControlEnabled {
                         Section {
                             TextValueView(
                                 name: String(localized: "URL"),
-                                value: model.wizardObsRemoteControlUrl
+                                value: createStreamWizard.obsRemoteControlUrl
                             )
                             TextValueView(
                                 name: String(localized: "Password"),
-                                value: model.wizardObsRemoteControlPassword
+                                value: createStreamWizard.obsRemoteControlPassword
                             )
                             TextValueView(
                                 name: String(localized: "BRB scene"),
-                                value: model.wizardObsRemoteControlBrbScene
+                                value: createStreamWizard.obsRemoteControlBrbScene
                             )
                             TextValueView(
                                 name: String(localized: "Source name"),
-                                value: model.wizardObsRemoteControlSourceName
+                                value: createStreamWizard.obsRemoteControlSourceName
                             )
                         } header: {
                             Text("OBS remote control")
@@ -163,41 +177,35 @@ struct StreamWizardSummarySettingsView: View {
                 Section {
                     TextValueView(
                         name: String(localized: "BTTV emotes"),
-                        value: yesOrNo(model.wizardChatBttv)
+                        value: yesOrNo(createStreamWizard.chatBttv)
                     )
-                    TextValueView(name: String(localized: "FFZ emotes"), value: yesOrNo(model.wizardChatFfz))
+                    TextValueView(name: String(localized: "FFZ emotes"), value: yesOrNo(createStreamWizard.chatFfz))
                     TextValueView(
                         name: String(localized: "7TV emotes"),
-                        value: yesOrNo(model.wizardChatSeventv)
+                        value: yesOrNo(createStreamWizard.chatSeventv)
                     )
                 } header: {
                     Text("Chat")
                 }
             }
             Section {
-                TextField("Name", text: $model.wizardName)
+                TextField("Name", text: $createStreamWizard.name)
             } header: {
                 Text("Stream name")
                     .disableAutocorrection(true)
             }
             Section {
-                HStack {
-                    Spacer()
-                    Button {
-                        model.createStreamFromWizard()
-                        model.isPresentingWizard = false
-                        model.isPresentingSetupWizard = false
-                    } label: {
-                        Text("Create")
-                    }
-                    .disabled(model.wizardName.isEmpty)
-                    Spacer()
+                TextButtonView("Create") {
+                    model.createStreamFromWizard()
+                    createStreamWizard.isPresenting = false
+                    createStreamWizard.isPresentingSetup = false
                 }
+                .disabled(createStreamWizard.name.isEmpty)
             }
         }
         .navigationTitle("Summary and stream name")
         .toolbar {
-            CreateStreamWizardToolbar()
+            CreateStreamWizardToolbar(createStreamWizard: createStreamWizard)
         }
     }
 }

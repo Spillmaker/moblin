@@ -5,15 +5,9 @@ private struct CosmeticsSettingsRestoreView: View {
 
     var body: some View {
         Section {
-            Button {
+            TextButtonView("Restore purchases") {
                 Task {
                     await model.updateProductFromAppStore()
-                }
-            } label: {
-                HStack {
-                    Spacer()
-                    Text("Restore purchases")
-                    Spacer()
                 }
             }
         }
@@ -26,7 +20,7 @@ private struct CosmeticsSettingsBoughtEverythingView: View {
             HStack {
                 Text("You already bought everything!")
                 Image(systemName: "heart.fill")
-                    .foregroundColor(.red)
+                    .foregroundStyle(.red)
             }
         } header: {
             Text("Icons in store")
@@ -38,15 +32,17 @@ private struct CosmeticsSettingsBoughtEverythingView: View {
 
 private struct CosmeticsSettingsIconsInStoreView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var cosmetics: Cosmetics
     @State var disabledPurchaseButtons: Set<String> = []
 
     var body: some View {
         Section {
             List {
-                ForEach(model.iconsInStore) { icon in
+                ForEach(cosmetics.iconsInStore) { icon in
                     HStack {
                         Text("")
                         Image(icon.imageNoBackground())
+                            .interpolation(.high)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: controlBarButtonSize, height: controlBarButtonSize)
@@ -90,6 +86,7 @@ private struct CosmeticsSettingsIconsInStoreView: View {
 
 private struct CosmeticsSettingsMyIconsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var cosmetics: Cosmetics
 
     private func setAppIcon(iconImage: String) {
         var iconImage: String? = iconImage
@@ -105,11 +102,12 @@ private struct CosmeticsSettingsMyIconsView: View {
 
     var body: some View {
         Section {
-            Picker("", selection: $model.iconImage) {
-                ForEach(model.myIcons) { icon in
+            Picker("", selection: $cosmetics.iconImage) {
+                ForEach(cosmetics.myIcons) { icon in
                     HStack {
                         Text("")
                         Image(icon.imageNoBackground())
+                            .interpolation(.high)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: controlBarButtonSize, height: controlBarButtonSize)
@@ -119,7 +117,7 @@ private struct CosmeticsSettingsMyIconsView: View {
                     .tag(icon.image())
                 }
             }
-            .onChange(of: model.iconImage) { iconImage in
+            .onChange(of: cosmetics.iconImage) { iconImage in
                 model.database.iconImage = iconImage
                 setAppIcon(iconImage: iconImage)
             }
@@ -135,6 +133,7 @@ private struct CosmeticsSettingsMyIconsView: View {
 
 struct CosmeticsSettingsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var cosmetics: Cosmetics
     @State var disabledPurchaseButtons: Set<String> = []
 
     var body: some View {
@@ -143,12 +142,12 @@ struct CosmeticsSettingsView: View {
                 HStack {
                     Text("Support Moblin developers by buying icons.")
                     Image(systemName: "heart.fill")
-                        .foregroundColor(.red)
+                        .foregroundStyle(.red)
                 }
             }
-            CosmeticsSettingsMyIconsView()
-            if !model.iconsInStore.isEmpty {
-                CosmeticsSettingsIconsInStoreView()
+            CosmeticsSettingsMyIconsView(cosmetics: cosmetics)
+            if !cosmetics.iconsInStore.isEmpty {
+                CosmeticsSettingsIconsInStoreView(cosmetics: cosmetics)
             } else {
                 CosmeticsSettingsBoughtEverythingView()
             }

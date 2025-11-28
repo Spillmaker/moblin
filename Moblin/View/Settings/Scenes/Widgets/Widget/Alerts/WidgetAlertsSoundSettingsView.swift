@@ -4,9 +4,7 @@ import UniformTypeIdentifiers
 
 private func loadSound(model: Model, soundId: UUID) -> AVAudioPlayer? {
     var url: URL?
-    if let bundledSound = model.database.alertsMediaGallery.bundledSounds
-        .first(where: { $0.id == soundId })
-    {
+    if let bundledSound = model.database.alertsMediaGallery.bundledSounds.first(where: { $0.id == soundId }) {
         url = Bundle.main.url(forResource: "Alerts.bundle/\(bundledSound.name)", withExtension: "mp3")
     } else {
         url = model.alertMediaStorage.makePath(id: soundId)
@@ -19,7 +17,7 @@ private func loadSound(model: Model, soundId: UUID) -> AVAudioPlayer? {
 
 private struct CustomSoundView: View {
     @EnvironmentObject var model: Model
-    var media: SettingsAlertsMediaGalleryItem
+    let media: SettingsAlertsMediaGalleryItem
     @State var showPicker = false
     @State var audioPlayer: AVAudioPlayer?
 
@@ -42,14 +40,8 @@ private struct CustomSoundView: View {
             }
             Section {
                 if let audioPlayer {
-                    Button {
+                    TextButtonView("Play") {
                         audioPlayer.play()
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Text("Play")
-                            Spacer()
-                        }
                     }
                 }
             }
@@ -77,7 +69,7 @@ private struct CustomSoundView: View {
 
 private struct SoundGalleryView: View {
     @EnvironmentObject var model: Model
-    var alert: SettingsWidgetAlertsAlert
+    let alert: SettingsWidgetAlertsAlert
     @Binding var soundId: UUID
 
     var body: some View {
@@ -94,20 +86,16 @@ private struct SoundGalleryView: View {
                             Text(sound.name)
                         }
                     }
-                    .onDelete(perform: { offsets in
+                    .onDelete { offsets in
                         model.database.alertsMediaGallery.customSounds.remove(atOffsets: offsets)
                         model.fixAlertMedias()
                         soundId = alert.soundId
-                    })
+                    }
                 }
-                Button {
+                TextButtonView("Add") {
                     let sound = SettingsAlertsMediaGalleryItem(name: "My sound")
                     model.database.alertsMediaGallery.customSounds.append(sound)
                     model.objectWillChange.send()
-                } label: {
-                    HCenter {
-                        Text("Add")
-                    }
                 }
             } footer: {
                 SwipeLeftToDeleteHelpView(kind: String(localized: "a sound"))
@@ -121,7 +109,7 @@ private var player: AVAudioPlayer?
 
 struct AlertSoundSelectorView: View {
     @EnvironmentObject var model: Model
-    var alert: SettingsWidgetAlertsAlert
+    let alert: SettingsWidgetAlertsAlert
     @Binding var soundId: UUID
 
     var body: some View {

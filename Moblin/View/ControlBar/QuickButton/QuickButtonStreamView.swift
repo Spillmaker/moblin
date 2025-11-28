@@ -3,17 +3,18 @@ import SwiftUI
 
 struct QuickButtonStreamView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var database: Database
 
     var body: some View {
         Form {
             Section {
                 Picker("", selection: $model.currentStreamId) {
-                    ForEach(model.database.streams) { stream in
+                    ForEach(database.streams) { stream in
                         Text(stream.name)
                     }
                 }
                 .onChange(of: model.currentStreamId) { _ in
-                    model.stopStream()
+                    _ = model.stopStream()
                     model.stopRecording()
                     if model.setCurrentStream(streamId: model.currentStreamId) {
                         model.reloadStream()
@@ -33,6 +34,6 @@ struct QuickButtonStreamView: View {
                 Text("Automatically goes live when switching stream.")
             }
         }
-        .navigationTitle("Stream")
+        .navigationTitle("Switch stream")
     }
 }

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct StreamOpenStreamingPlatformSettingsView: View {
     @EnvironmentObject var model: Model
-    var stream: SettingsStream
+    let stream: SettingsStream
 
     func submitUrl(value: String) {
         guard isValidWebSocketUrl(url: value) == nil else {
@@ -27,6 +27,7 @@ struct StreamOpenStreamingPlatformSettingsView: View {
                 TextEditNavigationView(
                     title: String(localized: "URL"),
                     value: stream.openStreamingPlatformUrl,
+                    onChange: isValidWebSocketUrl,
                     onSubmit: submitUrl,
                     placeholder: "ws://foo.org:5443/ws"
                 )

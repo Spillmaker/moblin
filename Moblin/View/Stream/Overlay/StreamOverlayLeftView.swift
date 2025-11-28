@@ -2,36 +2,61 @@ import SwiftUI
 import WebKit
 
 private struct CollapsedViewersView: View {
-    @EnvironmentObject var model: Model
-    var show: Bool
-    var color: Color
+    @ObservedObject var status: StatusTopLeft
+    let color: Color
 
     var body: some View {
-        if show {
-            HStack(spacing: 1) {
-                Image(systemName: "eye")
-                    .frame(width: 17, height: 17)
-                    .padding([.leading], 2)
-                    .foregroundColor(color)
-                if !model.numberOfViewers.isEmpty {
-                    Text(model.numberOfViewers)
-                        .foregroundColor(.white)
-                        .padding([.leading, .trailing], 2)
-                }
+        HStack(spacing: 1) {
+            Image(systemName: "eye")
+                .frame(width: 17, height: 17)
+                .padding([.leading], 2)
+                .foregroundStyle(color)
+            if !status.numberOfViewers.isEmpty {
+                Text(status.numberOfViewers)
+                    .foregroundStyle(.white)
+                    .padding([.leading, .trailing], 2)
             }
-            .font(smallFont)
-            .background(backgroundColor)
-            .cornerRadius(5)
-            .padding(20)
-            .contentShape(Rectangle())
-            .padding(-20)
         }
+        .font(smallFont)
+        .background(backgroundColor)
+        .cornerRadius(5)
+        .padding(20)
+        .contentShape(Rectangle())
+        .padding(-20)
+    }
+}
+
+private struct StreamStatusView: View {
+    @ObservedObject var status: StatusTopLeft
+    let textPlacement: StreamOverlayIconAndTextPlacement
+
+    var body: some View {
+        StreamOverlayIconAndTextView(
+            icon: "dot.radiowaves.left.and.right",
+            text: status.streamText,
+            textPlacement: textPlacement
+        )
+    }
+}
+
+private struct ZoomView: View {
+    @ObservedObject var zoom: Zoom
+    let textPlacement: StreamOverlayIconAndTextPlacement
+
+    var body: some View {
+        StreamOverlayIconAndTextView(
+            icon: "magnifyingglass",
+            text: zoom.statusText(),
+            textPlacement: textPlacement
+        )
     }
 }
 
 private struct StatusesView: View {
     @EnvironmentObject var model: Model
     @ObservedObject var show: SettingsShow
+    @ObservedObject var status: StatusTopLeft
+    @ObservedObject var mic: Mic
     let textPlacement: StreamOverlayIconAndTextPlacement
 
     func eventsColor() -> Color {
@@ -79,77 +104,82 @@ private struct StatusesView: View {
     }
 
     var body: some View {
-        StreamOverlayIconAndTextView(
-            show: model.isShowingStatusStream(),
-            icon: "dot.radiowaves.left.and.right",
-            text: model.statusStreamText(),
-            textPlacement: textPlacement
-        )
-        StreamOverlayIconAndTextView(
-            show: model.isShowingStatusCamera(),
-            icon: "camera",
-            text: model.statusCameraText(),
-            textPlacement: textPlacement
-        )
-        StreamOverlayIconAndTextView(
-            show: model.isShowingStatusMic(),
-            icon: "music.mic",
-            text: model.currentMic.name,
-            textPlacement: textPlacement
-        )
-        if textPlacement != .hide {
+        if model.isShowingStatusStream() {
+            StreamStatusView(status: status, textPlacement: textPlacement)
+        }
+        if model.isShowingStatusCamera() {
             StreamOverlayIconAndTextView(
-                show: model.isShowingStatusZoom(),
-                icon: "magnifyingglass",
-                text: model.statusZoomText(),
+                icon: "camera",
+                text: status.statusCameraText,
                 textPlacement: textPlacement
             )
         }
-        StreamOverlayIconAndTextView(
-            show: model.isShowingStatusObs(),
-            icon: "xserve",
-            text: model.statusObsText(),
-            textPlacement: textPlacement,
-            color: obsStatusColor()
-        )
-        StreamOverlayIconAndTextView(
-            show: model.isShowingStatusEvents(),
-            icon: "megaphone",
-            text: model.statusEventsText,
-            textPlacement: textPlacement,
-            color: eventsColor()
-        )
-        StreamOverlayIconAndTextView(
-            show: model.isShowingStatusChat(),
-            icon: "message",
-            text: model.statusChatText,
-            textPlacement: textPlacement,
-            color: chatColor()
-        )
-        if textPlacement == .hide {
-            CollapsedViewersView(show: model.isShowingStatusViewers(), color: .white)
-        } else {
+        if model.isShowingStatusMic() {
             StreamOverlayIconAndTextView(
-                show: model.isShowingStatusViewers(),
-                icon: "eye",
-                text: model.statusViewersText(),
+                icon: "music.mic",
+                text: mic.current.name,
                 textPlacement: textPlacement
             )
+        }
+        if textPlacement != .hide, model.isShowingStatusZoom() {
+            ZoomView(zoom: model.zoom, textPlacement: textPlacement)
+        }
+        if model.isShowingStatusObs() {
+            StreamOverlayIconAndTextView(
+                icon: "xserve",
+                text: status.statusObsText,
+                textPlacement: textPlacement,
+                color: obsStatusColor()
+            )
+        }
+        if model.isShowingStatusEvents() {
+            StreamOverlayIconAndTextView(
+                icon: "megaphone",
+                text: status.statusEventsText,
+                textPlacement: textPlacement,
+                color: eventsColor()
+            )
+        }
+        if model.isShowingStatusChat() {
+            StreamOverlayIconAndTextView(
+                icon: "message",
+                text: status.statusChatText,
+                textPlacement: textPlacement,
+                color: chatColor()
+            )
+        }
+        if model.isShowingStatusViewers() {
+            if textPlacement == .hide {
+                CollapsedViewersView(status: status, color: .white)
+            } else {
+                StreamOverlayIconAndTextView(
+                    icon: "eye",
+                    text: model.statusViewersText(),
+                    textPlacement: textPlacement
+                )
+            }
         }
     }
 }
 
 struct LeftOverlayView: View {
-    @EnvironmentObject var model: Model
+    let model: Model
+    @ObservedObject var database: Database
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             VStack(alignment: .leading, spacing: 1) {
-                if model.verboseStatuses {
-                    StatusesView(show: model.database.show, textPlacement: .afterIcon)
+                if database.verboseStatuses {
+                    StatusesView(show: database.show,
+                                 status: model.statusTopLeft,
+                                 mic: model.mic,
+                                 textPlacement: .afterIcon)
                 } else {
                     HStack(spacing: 1) {
-                        StatusesView(show: model.database.show, textPlacement: .hide)
+                        StatusesView(show: database.show,
+                                     status: model.statusTopLeft,
+                                     mic: model.mic,
+                                     textPlacement: .hide)
                     }
                 }
             }

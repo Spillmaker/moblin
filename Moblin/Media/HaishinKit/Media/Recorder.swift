@@ -12,7 +12,7 @@ protocol RecorderDelegate: AnyObject {
     func recorderFinished()
 }
 
-private let recorderQueue = DispatchQueue(label: "com.eerimoq.recorder")
+private let fileWriterQueue = DispatchQueue(label: "com.eerimoq.recorder")
 
 class Recorder: NSObject {
     private var replay = false
@@ -30,13 +30,13 @@ class Recorder: NSObject {
     weak var delegate: RecorderDelegate?
 
     func setAudioChannelsMap(map: [Int: Int]) {
-        mixerLockQueue.async {
+        processorPipelineQueue.async {
             self.outputChannelsMap = map
         }
     }
 
     func startRunning(url: URL?, replay: Bool, audioOutputSettings: [String: Any], videoOutputSettings: [String: Any]) {
-        mixerLockQueue.async {
+        processorPipelineQueue.async {
             self.startRunningInner(
                 url: url,
                 replay: replay,
@@ -47,13 +47,13 @@ class Recorder: NSObject {
     }
 
     func stopRunning() {
-        mixerLockQueue.async {
+        processorPipelineQueue.async {
             self.stopRunningInner()
         }
     }
 
     func setUrl(url: URL?) {
-        recorderQueue.async {
+        fileWriterQueue.async {
             if let url {
                 try? Data().write(to: url)
                 self.fileHandle = FileHandle(forWritingAtPath: url.path)
@@ -67,7 +67,7 @@ class Recorder: NSObject {
     }
 
     func setReplayBuffering(enabled: Bool) {
-        recorderQueue.async {
+        fileWriterQueue.async {
             self.replay = enabled
             if let initSegment = self.initSegment {
                 self.delegate?.recorderInitSegment(data: initSegment)
@@ -75,22 +75,22 @@ class Recorder: NSObject {
         }
     }
 
-    func appendAudio(_ sampleBuffer: CMSampleBuffer) {
-        appendAudioInner(sampleBuffer)
+    func appendAudio(_ sampleBuffer: CMSampleBuffer, _ presentationTimeStamp: CMTime) {
+        appendAudioInner(sampleBuffer, presentationTimeStamp)
     }
 
     func appendVideo(_ sampleBuffer: CMSampleBuffer) {
         appendVideoInner(sampleBuffer)
     }
 
-    private func appendAudioInner(_ sampleBuffer: CMSampleBuffer) {
+    private func appendAudioInner(_ sampleBuffer: CMSampleBuffer, _ presentationTimeStamp: CMTime) {
         guard let writer,
-              let sampleBuffer = convertAudio(sampleBuffer),
-              let input = makeAudioWriterInput(sampleBuffer: sampleBuffer),
+              let sampleBuffer = convertAudio(sampleBuffer, presentationTimeStamp),
+              let input = makeAudioWriterInput(sampleBuffer: sampleBuffer, presentationTimeStamp),
               isReadyForStartWriting(writer: writer),
               input.isReadyForMoreMediaData,
               let sampleBuffer = sampleBuffer
-              .replacePresentationTimeStamp(sampleBuffer.presentationTimeStamp - basePresentationTimeStamp)
+              .replacePresentationTimeStamp(presentationTimeStamp - basePresentationTimeStamp)
         else {
             return
         }
@@ -103,11 +103,15 @@ class Recorder: NSObject {
         }
     }
 
-    private func convertAudio(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer? {
-        return tryConvertAudio(sampleBuffer) ?? tryConvertAudio(sampleBuffer, makeConverter: true)
+    private func convertAudio(_ sampleBuffer: CMSampleBuffer, _ presentationTimeStamp: CMTime) -> CMSampleBuffer? {
+        return tryConvertAudio(sampleBuffer, presentationTimeStamp)
+            ?? tryConvertAudio(sampleBuffer, presentationTimeStamp, makeConverter: true)
     }
 
-    private func tryConvertAudio(_ sampleBuffer: CMSampleBuffer, makeConverter: Bool = false) -> CMSampleBuffer? {
+    private func tryConvertAudio(_ sampleBuffer: CMSampleBuffer,
+                                 _ presentationTimeStamp: CMTime,
+                                 makeConverter: Bool = false) -> CMSampleBuffer?
+    {
         if makeConverter {
             makeAudioConverter(sampleBuffer.formatDescription)
         }
@@ -134,7 +138,7 @@ class Recorder: NSObject {
                 logger.info("recorder: audio: Convert failed with \(error.localizedDescription)")
                 return nil
             }
-            return outputBuffer.makeSampleBuffer(presentationTimeStamp: sampleBuffer.presentationTimeStamp)
+            return outputBuffer.makeSampleBuffer(presentationTimeStamp)
         }
     }
 
@@ -157,7 +161,9 @@ class Recorder: NSObject {
         }
     }
 
-    private func createAudioWriterInput(sampleBuffer: CMSampleBuffer) -> AVAssetWriterInput {
+    private func createAudioWriterInput(sampleBuffer: CMSampleBuffer,
+                                        _ presentationTimeStamp: CMTime) -> AVAssetWriterInput
+    {
         let sourceFormatHint = sampleBuffer.formatDescription
         var outputSettings: [String: Any] = [:]
         if let sourceFormatHint, let inSourceFormat = sourceFormatHint.audioStreamBasicDescription {
@@ -173,12 +179,14 @@ class Recorder: NSObject {
                 }
             }
         }
-        return makeWriterInput(.audio, outputSettings, sampleBuffer: sampleBuffer)
+        return makeWriterInput(.audio, outputSettings, sampleBuffer, presentationTimeStamp)
     }
 
-    private func makeAudioWriterInput(sampleBuffer: CMSampleBuffer) -> AVAssetWriterInput? {
+    private func makeAudioWriterInput(sampleBuffer: CMSampleBuffer,
+                                      _ presentationTimeStamp: CMTime) -> AVAssetWriterInput?
+    {
         if audioWriterInput == nil {
-            audioWriterInput = createAudioWriterInput(sampleBuffer: sampleBuffer)
+            audioWriterInput = createAudioWriterInput(sampleBuffer: sampleBuffer, presentationTimeStamp)
         }
         return audioWriterInput
     }
@@ -198,7 +206,7 @@ class Recorder: NSObject {
                 outputSettings[key] = value
             }
         }
-        return makeWriterInput(.video, outputSettings, sampleBuffer: sampleBuffer)
+        return makeWriterInput(.video, outputSettings, sampleBuffer, sampleBuffer.presentationTimeStamp)
     }
 
     private func makeVideoWriterInput(sampleBuffer: CMSampleBuffer) -> AVAssetWriterInput? {
@@ -210,7 +218,8 @@ class Recorder: NSObject {
 
     private func makeWriterInput(_ mediaType: AVMediaType,
                                  _ outputSettings: [String: Any],
-                                 sampleBuffer: CMSampleBuffer) -> AVAssetWriterInput
+                                 _ sampleBuffer: CMSampleBuffer,
+                                 _ presentationTimeStamp: CMTime) -> AVAssetWriterInput
     {
         if let audioStreamBasicDescription = sampleBuffer.formatDescription?.audioStreamBasicDescription {
             logger.info("recorder: Make writer: Output: \(outputSettings), Input: \(audioStreamBasicDescription)")
@@ -225,7 +234,7 @@ class Recorder: NSObject {
         if writer?.inputs.count == 2 {
             writer?.startWriting()
             writer?.startSession(atSourceTime: .zero)
-            basePresentationTimeStamp = sampleBuffer.presentationTimeStamp
+            basePresentationTimeStamp = presentationTimeStamp
         }
         return input
     }
@@ -313,7 +322,7 @@ class Recorder: NSObject {
         writer = AVAssetWriter(contentType: UTType(AVFileType.mp4.rawValue)!)
         writer?.shouldOptimizeForNetworkUse = true
         writer?.outputFileTypeProfile = .mpeg4AppleHLS
-        writer?.preferredOutputSegmentInterval = CMTime(seconds: 2, preferredTimescale: 1)
+        writer?.preferredOutputSegmentInterval = CMTime(seconds: 2)
         writer?.delegate = self
         writer?.initialSegmentStartTime = .zero
         setUrl(url: url)
@@ -329,13 +338,9 @@ class Recorder: NSObject {
             reset()
             return
         }
-        let dispatchGroup = DispatchGroup()
-        dispatchGroup.enter()
         writer.finishWriting {
             self.delegate?.recorderFinished()
-            dispatchGroup.leave()
         }
-        dispatchGroup.wait()
         reset()
     }
 
@@ -346,7 +351,7 @@ class Recorder: NSObject {
         audioConverter = nil
         audioOutputFormat = nil
         basePresentationTimeStamp = .zero
-        recorderQueue.async {
+        fileWriterQueue.async {
             self.fileHandle = nil
             self.initSegment = nil
         }
@@ -363,7 +368,7 @@ extension Recorder: AVAssetWriterDelegate {
                      segmentType: AVAssetSegmentType,
                      segmentReport: AVAssetSegmentReport?)
     {
-        recorderQueue.async {
+        fileWriterQueue.async {
             self.fileHandle?.write(segmentData)
             if segmentType == .initialization {
                 self.initSegment = segmentData

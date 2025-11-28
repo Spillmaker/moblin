@@ -117,19 +117,19 @@ final class PngTuberEffect: VideoEffect {
     }
 
     func setVideoSourceId(videoSourceId: UUID) {
-        mixerLockQueue.async {
+        processorPipelineQueue.async {
             self.videoSourceId = videoSourceId
         }
     }
 
     func setSceneWidget(sceneWidget: SettingsSceneWidget) {
-        mixerLockQueue.async {
+        processorPipelineQueue.async {
             self.sceneWidget = sceneWidget
         }
     }
 
     func setSettings(mirror: Bool) {
-        mixerLockQueue.async {
+        processorPipelineQueue.async {
             self.mirror = mirror
         }
     }
@@ -155,7 +155,8 @@ final class PngTuberEffect: VideoEffect {
             }
         }
         return pngTuberImage?
-            .resizeMoveMirror(sceneWidget, image.extent.size, mirror)
+            .resizeMirror(sceneWidget.layout, image.extent.size, mirror)
+            .move(sceneWidget.layout, image.extent.size)
             .composited(over: image)
             .cropped(to: image.extent) ?? image
     }

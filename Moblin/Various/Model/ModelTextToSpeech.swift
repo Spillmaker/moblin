@@ -24,22 +24,22 @@ extension Model {
         if isAlertMessage(post: post) && isTextToSpeechEnabledForAnyAlertWidget() {
             return false
         }
-        return true
+        return post.user != nil
     }
 
     private func isTextToSpeechEnabledForAnyAlertWidget() -> Bool {
         for alertEffect in enabledAlertsEffects {
             let settings = alertEffect.getSettings()
-            if settings.twitch!.follows.isTextToSpeechEnabled() {
+            if settings.twitch.follows.isTextToSpeechEnabled() {
                 return true
             }
-            if settings.twitch!.subscriptions.isTextToSpeechEnabled() {
+            if settings.twitch.subscriptions.isTextToSpeechEnabled() {
                 return true
             }
-            if settings.twitch!.raids!.isTextToSpeechEnabled() {
+            if settings.twitch.raids.isTextToSpeechEnabled() {
                 return true
             }
-            if settings.twitch!.cheers!.isTextToSpeechEnabled() {
+            if settings.twitch.cheers.isTextToSpeechEnabled() {
                 return true
             }
         }
@@ -54,9 +54,13 @@ extension Model {
         if isKickPusherConfigured() {
             streamerMentions.append("@\(stream.kickChannelName)")
         }
-        if isAfreecaTvChatConfigured() {
-            streamerMentions.append("@\(stream.afreecaTvChannelName)")
+        if isSoopChatConfigured() {
+            streamerMentions.append("@\(stream.soopChannelName)")
         }
         chatTextToSpeech.setStreamerMentions(streamerMentions: streamerMentions)
+    }
+
+    func previewTextToSpeech(username: String, message: String) {
+        chatTextToSpeech.sayPreview(user: username, message: message)
     }
 }

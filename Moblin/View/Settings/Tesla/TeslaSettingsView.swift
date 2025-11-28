@@ -16,13 +16,14 @@ private func formatTeslaVehicleState(state: TeslaVehicleState?) -> String {
 
 private struct TeslaSettingsConfigurationView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var tesla: Tesla
 
-    private var tesla: SettingsTesla {
-        return model.database.tesla
+    private var database: Database {
+        return model.database
     }
 
     private func onSubmitVin(value: String) {
-        tesla.vin = value.trim()
+        database.tesla.vin = value.trim()
         model.reloadTeslaVehicle()
     }
 
@@ -31,20 +32,16 @@ private struct TeslaSettingsConfigurationView: View {
             Section {
                 TextEditNavigationView(
                     title: String(localized: "VIN"),
-                    value: tesla.vin,
+                    value: database.tesla.vin,
                     onSubmit: onSubmitVin
                 )
             } footer: {
                 Text("Scroll down in your Tesla app and copy it.")
             }
             Section {
-                Button {
-                    tesla.privateKey = teslaGeneratePrivateKey().pemRepresentation
+                TextButtonView("Generate new key") {
+                    database.tesla.privateKey = teslaGeneratePrivateKey().pemRepresentation
                     model.reloadTeslaVehicle()
-                } label: {
-                    HCenter {
-                        Text("Generate new key")
-                    }
                 }
             } footer: {
                 Text("""
@@ -53,14 +50,11 @@ private struct TeslaSettingsConfigurationView: View {
                 """)
             }
             Section {
-                Button {
+                TextButtonView("Add key to vehicle") {
                     model.teslaAddKeyToVehicle()
-                } label: {
-                    HCenter {
-                        Text("Add key to vehicle")
-                    }
                 }
-                .disabled(tesla.vin.isEmpty || tesla.privateKey.isEmpty || model.teslaVehicleState != .connected)
+                .disabled(database.tesla.vin.isEmpty || database.tesla.privateKey.isEmpty || tesla
+                    .vehicleState != .connected)
             } footer: {
                 Text("Remove keys in Controls → Locks on your Tesla's center screen.")
             }
@@ -71,6 +65,7 @@ private struct TeslaSettingsConfigurationView: View {
 
 struct TeslaSettingsView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var tesla: Tesla
 
     var body: some View {
         Form {
@@ -83,7 +78,7 @@ struct TeslaSettingsView: View {
             }
             Section {
                 Toggle(isOn: Binding(get: {
-                    model.database.tesla.enabled!
+                    model.database.tesla.enabled
                 }, set: {
                     model.database.tesla.enabled = $0
                     model.reloadTeslaVehicle()
@@ -91,85 +86,57 @@ struct TeslaSettingsView: View {
                     Text("Enabled")
                 }
                 NavigationLink {
-                    TeslaSettingsConfigurationView()
+                    TeslaSettingsConfigurationView(tesla: tesla)
                 } label: {
                     Text("Configuration")
                 }
             }
             Section {
                 HCenter {
-                    Text(formatTeslaVehicleState(state: model.teslaVehicleState))
+                    Text(formatTeslaVehicleState(state: tesla.vehicleState))
                 }
             }
             Section {
-                Button {
+                TextButtonView("Flash lights") {
                     model.teslaFlashLights()
-                } label: {
-                    HCenter {
-                        Text("Flash lights")
-                    }
                 }
-                .disabled(!model.teslaVehicleInfotainmentConnected)
+                .disabled(!tesla.vehicleInfotainmentConnected)
             }
             Section {
-                Button {
+                TextButtonView("Honk") {
                     model.teslaHonk()
-                } label: {
-                    HCenter {
-                        Text("Honk")
-                    }
                 }
-                .disabled(!model.teslaVehicleInfotainmentConnected)
+                .disabled(!tesla.vehicleInfotainmentConnected)
             }
             Section {
-                Button {
+                TextButtonView("Open trunk") {
                     model.teslaOpenTrunk()
-                } label: {
-                    HCenter {
-                        Text("Open trunk")
-                    }
                 }
-                .disabled(!model.teslaVehicleVehicleSecurityConnected)
+                .disabled(!tesla.vehicleVehicleSecurityConnected)
             }
             Section {
-                Button {
+                TextButtonView("Close trunk") {
                     model.teslaCloseTrunk()
-                } label: {
-                    HCenter {
-                        Text("Close trunk")
-                    }
                 }
-                .disabled(!model.teslaVehicleVehicleSecurityConnected)
+                .disabled(!tesla.vehicleVehicleSecurityConnected)
             }
             Section {
-                Button {
+                TextButtonView("Next media track") {
                     model.mediaNextTrack()
-                } label: {
-                    HCenter {
-                        Text("Next media track")
-                    }
                 }
-                .disabled(!model.teslaVehicleInfotainmentConnected)
+                .disabled(!tesla.vehicleInfotainmentConnected)
             }
             Section {
-                Button {
+                TextButtonView("Previous media track") {
                     model.mediaPreviousTrack()
-                } label: {
-                    HCenter {
-                        Text("Previous media  track")
-                    }
                 }
-                .disabled(!model.teslaVehicleInfotainmentConnected)
+                .disabled(!tesla.vehicleInfotainmentConnected)
             }
             Section {
-                Button {
+                TextButtonView("Toggle media playback") {
                     model.mediaTogglePlayback()
-                } label: {
-                    HCenter {
-                        Text("Toggle media playback")
-                    }
                 }
-                .disabled(!model.teslaVehicleInfotainmentConnected)
+                .disabled(!tesla.vehicleInfotainmentConnected)
             }
         }
         .navigationTitle("Tesla")

@@ -11,13 +11,13 @@ extension Model {
         if showTwitchAuth {
             return false
         }
-        if isPresentingWizard {
+        if createStreamWizard.isPresenting {
             return false
         }
-        if isPresentingSetupWizard {
+        if createStreamWizard.isPresentingSetup {
             return false
         }
-        if wizardShowTwitchAuth {
+        if createStreamWizard.showTwitchAuth {
             return false
         }
         return true
@@ -52,11 +52,11 @@ extension Model {
             toggleMute()
             toggleGlobalButton(type: .mute)
         case .blackScreen:
-            toggleBlackScreen()
+            toggleStealthMode()
         case .scene:
             selectScene(id: key.sceneId)
         case .widget:
-            toggleWidgetOnOff(id: key.widgetId!)
+            toggleWidgetOnOff(id: key.widgetId)
         case .instantReplay:
             instantReplay()
         }

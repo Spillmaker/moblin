@@ -2,18 +2,19 @@ import SwiftUI
 
 private struct DjiDeviceSettingsWrapperView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject var djiDevices: SettingsDjiDevices
     @ObservedObject var device: SettingsDjiDevice
 
     var body: some View {
         NavigationLink {
-            DjiDeviceSettingsView(device: device)
+            DjiDeviceSettingsView(djiDevices: djiDevices, device: device, status: model.statusTopRight)
         } label: {
             HStack {
                 DraggableItemPrefixView()
                 Text(device.name)
                 Spacer()
-                Text(formatDjiDeviceState(state: model.getDjiDeviceState(device: device)))
-                    .foregroundColor(.gray)
+                Text(formatDjiDeviceState(state: device.state))
+                    .foregroundStyle(.gray)
             }
         }
     }
@@ -33,18 +34,18 @@ struct DjiDevicesSettingsView: View {
             Section {
                 List {
                     ForEach(djiDevices.devices) { device in
-                        DjiDeviceSettingsWrapperView(device: device)
+                        DjiDeviceSettingsWrapperView(djiDevices: djiDevices, device: device)
                     }
-                    .onMove(perform: { froms, to in
+                    .onMove { froms, to in
                         djiDevices.devices.move(fromOffsets: froms, toOffset: to)
-                    })
-                    .onDelete(perform: { offsets in
+                    }
+                    .onDelete { offsets in
                         model.removeDjiDevices(offsets: offsets)
-                    })
+                    }
                 }
                 CreateButtonView {
                     let device = SettingsDjiDevice()
-                    device.name = "My device"
+                    device.name = makeUniqueName(name: SettingsDjiDevice.baseName, existingNames: djiDevices.devices)
                     djiDevices.devices.append(device)
                 }
             } footer: {

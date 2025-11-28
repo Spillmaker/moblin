@@ -1,73 +1,347 @@
 import SwiftUI
 
-private struct PermissionsSettingsView: View {
-    // periphery:ignore
-    @EnvironmentObject var model: Model
-    var permissions: SettingsChatBotPermissionsCommand
-    @State private var minimumSubscriberTier: Int
-
-    init(permissions: SettingsChatBotPermissionsCommand) {
-        self.permissions = permissions
-        minimumSubscriberTier = permissions.minimumSubscriberTier!
-    }
+private struct PermissionsSettingsInnerView: View {
+    @ObservedObject var permissions: SettingsChatBotPermissionsCommand
 
     var body: some View {
-        Form {
-            Section {
-                Toggle(isOn: Binding(get: {
-                    permissions.moderatorsEnabled
-                }, set: { value in
-                    permissions.moderatorsEnabled = value
-                }), label: {
-                    Text("Moderators")
-                })
-                Toggle(isOn: Binding(get: {
-                    permissions.subscribersEnabled!
-                }, set: { value in
-                    permissions.subscribersEnabled = value
-                }), label: {
-                    Text("Subscribers")
-                })
-                Picker(selection: $minimumSubscriberTier) {
-                    ForEach([3, 2, 1], id: \.self) { tier in
-                        Text(String(tier))
-                    }
-                } label: {
-                    Text("Minimum subscriber tier")
+        Section {
+            Toggle("Moderators", isOn: $permissions.moderatorsEnabled)
+            Toggle("Subscribers", isOn: $permissions.subscribersEnabled)
+            Picker("Minimum subscriber tier", selection: $permissions.minimumSubscriberTier) {
+                ForEach([3, 2, 1], id: \.self) { tier in
+                    Text(String(tier))
                 }
-                .onChange(of: minimumSubscriberTier) { value in
-                    permissions.minimumSubscriberTier = value
-                }
-                Toggle(isOn: Binding(get: {
-                    permissions.othersEnabled
-                }, set: { value in
-                    permissions.othersEnabled = value
-                }), label: {
-                    Text("Others")
-                })
-            } header: {
-                Text("Permissions")
             }
-            Section {
-                Toggle(isOn: Binding(get: {
-                    permissions.sendChatMessages!
-                }, set: { value in
-                    permissions.sendChatMessages! = value
-                }), label: {
-                    Text("Send chat responses")
-                })
-            } footer: {
-                Text("""
-                Typically sends a chat message if the user is not allowed to execute the command. Some \
-                commands responds on success as well.
-                """)
-            }
+            Toggle("Others", isOn: $permissions.othersEnabled)
+        } header: {
+            Text("Permissions")
         }
-        .navigationTitle("Command")
+        Section {
+            Picker("Cooldown", selection: $permissions.cooldown) {
+                Text("-- None --")
+                    .tag(nil as Int?)
+                ForEach([1, 2, 3, 5, 10, 15, 30, 60], id: \.self) { cooldown in
+                    Text("\(cooldown)s")
+                        .tag(cooldown as Int?)
+                }
+            }
+        } footer: {
+            Text("Does not apply to you and your moderators.")
+        }
+        Section {
+            Toggle("Send chat responses", isOn: $permissions.sendChatMessages)
+        } footer: {
+            Text("""
+            Typically sends a chat message if the user is not allowed to execute the command. Some \
+            commands responds on success as well.
+            """)
+        }
     }
 }
 
-struct ChatBotCommandsSettingsView: View {
+private struct PermissionsSettingsView: View {
+    let title: String
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        NavigationLink {
+            Form {
+                PermissionsSettingsInnerView(permissions: permissions)
+            }
+            .navigationTitle(title)
+        } label: {
+            Text(title)
+        }
+    }
+}
+
+private struct FixPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: "!moblin obs fix",
+                permissions: permissions
+            )
+        } footer: {
+            Text("Fix OBS input.")
+        }
+    }
+}
+
+private struct AlertPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: String(localized: "!moblin alert <name>"),
+                permissions: permissions
+            )
+        } footer: {
+            Text("Trigger alerts. Configure alert names in alert widgets.")
+        }
+    }
+}
+
+private struct FaxPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: String(localized: "!moblin fax <url>"),
+                permissions: permissions
+            )
+        } footer: {
+            Text("Fax the streamer images.")
+        }
+    }
+}
+
+private struct SnapshotPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: String(localized: "!moblin snapshot <optional message>"),
+                permissions: permissions
+            )
+        } footer: {
+            Text("Take snapshot.")
+        }
+    }
+}
+
+private struct ReactionPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: String(localized: "!moblin reaction <reaction>"),
+                permissions: permissions
+            )
+        } footer: {
+            VStack(alignment: .leading) {
+                Text("Perform Apple reaction.")
+                Text("")
+                Text("<reaction> is hearts, fireworks, balloons, confetti or lasers.")
+            }
+        }
+    }
+}
+
+private struct FilterPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: String(localized: "!moblin filter <filter> <on/off>"),
+                permissions: permissions
+            )
+        } footer: {
+            VStack(alignment: .leading) {
+                Text("Turn a filter on or off.")
+                Text("")
+                Text("<filter> is movie, grayscale, sepia, triple, pixellate or 4:3.")
+                Text("")
+                Text("<on/off> is on or off.")
+            }
+        }
+    }
+}
+
+private struct ScenePermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: String(localized: "!moblin scene <name>"),
+                permissions: permissions
+            )
+        } footer: {
+            Text("Switch to given scene.")
+        }
+    }
+}
+
+private struct StreamPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: "!moblin stream ...",
+                permissions: permissions
+            )
+        } footer: {
+            VStack(alignment: .leading) {
+                Text(String("!moblin stream start"))
+                Text("Start the stream.")
+                Text("")
+                Text(String("!moblin stream stop"))
+                Text("Stop the stream.")
+                Text("")
+                Text("!moblin stream title <title>")
+                Text("Set stream title.")
+                Text("")
+                Text("!moblin stream category <category name>")
+                Text("Set stream category.")
+            }
+        }
+    }
+}
+
+private struct WidgetPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: String(localized: "!moblin widget <name> timer <number> add <seconds>"),
+                permissions: permissions
+            )
+        } footer: {
+            VStack(alignment: .leading) {
+                Text("!moblin widget <name> timer <number> add <seconds>")
+                Text("Change timer value.")
+            }
+        }
+    }
+}
+
+private struct LocationPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: "moblin location data reset",
+                permissions: permissions
+            )
+        } footer: {
+            Text("Resets distance, average speed and slope.")
+        }
+    }
+}
+
+private struct MapPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: "moblin map zoom out",
+                permissions: permissions
+            )
+        } footer: {
+            Text("Zoom out map widget temporarily.")
+        }
+    }
+}
+
+private struct TtsSayPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: "!moblin tts/say ...",
+                permissions: permissions
+            )
+        } footer: {
+            VStack(alignment: .leading) {
+                Text(String("!moblin tts on"))
+                Text("Turn on chat text to speech.")
+                Text("")
+                Text(String("!moblin tts off"))
+                Text("Turn off chat text to speech.")
+                Text("")
+                Text("!moblin say <message>")
+                Text("Say given message.")
+            }
+        }
+    }
+}
+
+private struct AiPermissionsSettingsView: View {
+    @ObservedObject var permissions: SettingsChatBotPermissionsCommand
+    let ai: SettingsOpenAi
+
+    var body: some View {
+        Section {
+            NavigationLink {
+                Form {
+                    OpenAiSettingsView(ai: ai)
+                    PermissionsSettingsInnerView(permissions: permissions)
+                }
+                .navigationTitle("!moblin ai ask <question>")
+            } label: {
+                Text("!moblin ai ask <question>")
+            }
+        } footer: {
+            Text("Ask an AI a question.")
+        }
+    }
+}
+
+private struct MuteUnmutePermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: "!moblin mute/unmute",
+                permissions: permissions
+            )
+        } footer: {
+            VStack(alignment: .leading) {
+                Text(String("!moblin mute"))
+                Text("Mute audio.")
+                Text("")
+                Text(String("!moblin unmute"))
+                Text("Unmute audio.")
+            }
+        }
+    }
+}
+
+private struct TeslaPermissionsSettingsView: View {
+    let permissions: SettingsChatBotPermissionsCommand
+
+    var body: some View {
+        Section {
+            PermissionsSettingsView(
+                title: "!moblin tesla ...",
+                permissions: permissions
+            )
+        } footer: {
+            VStack(alignment: .leading) {
+                Text(String("!moblin tesla trunk open"))
+                Text("Open the trunk.")
+                Text("")
+                Text(String("!moblin tesla trunk close"))
+                Text("Close the trunk.")
+                Text("")
+                Text(String("!moblin tesla media next"))
+                Text("Next track.")
+                Text("")
+                Text(String("!moblin tesla media previous"))
+                Text("Previous track.")
+                Text("")
+                Text(String("!moblin tesla media toggle-playback"))
+                Text("Toggle playback.")
+            }
+        }
+    }
+}
+
+private struct ChatBotCommandsSettingsView: View {
     @EnvironmentObject var model: Model
 
     private var permissions: SettingsChatBotPermissions {
@@ -76,162 +350,121 @@ struct ChatBotCommandsSettingsView: View {
 
     var body: some View {
         Form {
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.fix)
-                } label: {
-                    Text("!moblin obs fix")
-                }
-            } footer: {
-                Text("Fix OBS input.")
-            }
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.alert!)
-                } label: {
-                    Text("!moblin alert <name>")
-                }
-            } footer: {
-                Text("Trigger alerts. Configure alert names in alert widgets.")
-            }
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.fax!)
-                } label: {
-                    Text("!moblin fax <url>")
-                }
-            } footer: {
-                Text("Fax the streamer images.")
-            }
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.snapshot!)
-                } label: {
-                    Text("!moblin snapshot <optional message>")
-                }
-            } footer: {
-                Text("Take snapshot.")
-            }
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.reaction!)
-                } label: {
-                    Text("!moblin reaction <reaction>")
-                }
-            } footer: {
-                VStack(alignment: .leading) {
-                    Text("Perform Apple reaction.")
-                    Text("")
-                    Text("<reaction> is hearts, fireworks, balloons, confetti or lasers.")
-                }
-            }
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.filter!)
-                } label: {
-                    Text("!moblin filter <filter> <on/off>")
-                }
-            } footer: {
-                VStack(alignment: .leading) {
-                    Text("Turn a filter on or off.")
-                    Text("")
-                    Text("<filter> is movie, grayscale, sepia, triple, pixellate or 4:3.")
-                    Text("")
-                    Text("<on/off> is on or off.")
-                }
-            }
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.scene!)
-                } label: {
-                    Text("!moblin scene <name>")
-                }
-            } footer: {
-                Text("Switch to given scene.")
-            }
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.stream!)
-                } label: {
-                    Text("!moblin stream ...")
-                }
-            } footer: {
-                VStack(alignment: .leading) {
-                    Text("!moblin stream title <title>")
-                    Text("Set stream title.")
-                    Text("")
-                    Text("!moblin stream category <category name>")
-                    Text("Set stream category.")
+            AiPermissionsSettingsView(permissions: permissions.ai, ai: model.database.chat.botCommandAi)
+            AlertPermissionsSettingsView(permissions: permissions.alert)
+            FaxPermissionsSettingsView(permissions: permissions.fax)
+            FilterPermissionsSettingsView(permissions: permissions.filter)
+            FixPermissionsSettingsView(permissions: permissions.fix)
+            LocationPermissionsSettingsView(permissions: permissions.location)
+            MapPermissionsSettingsView(permissions: permissions.map)
+            MuteUnmutePermissionsSettingsView(permissions: permissions.audio)
+            ReactionPermissionsSettingsView(permissions: permissions.reaction)
+            ScenePermissionsSettingsView(permissions: permissions.scene)
+            SnapshotPermissionsSettingsView(permissions: permissions.snapshot)
+            StreamPermissionsSettingsView(permissions: permissions.stream)
+            TeslaPermissionsSettingsView(permissions: permissions.tesla)
+            TtsSayPermissionsSettingsView(permissions: permissions.tts)
+            WidgetPermissionsSettingsView(permissions: permissions.widget)
+        }
+        .navigationTitle("Commands")
+    }
+}
+
+private struct ChatBotAliasSettingsView: View {
+    @ObservedObject var alias: SettingsChatBotAlias
+
+    private func onAliasChange(value: String) -> String? {
+        guard !value.isEmpty else {
+            return String(localized: "The alias must not be empty.")
+        }
+        guard value.starts(with: "!") else {
+            return String(localized: "The alias must start with !.")
+        }
+        guard value.count > 1 else {
+            return String(localized: "The alias is too short.")
+        }
+        guard !value.starts(with: "!moblin") else {
+            return String(localized: "The alias must not start with !moblin.")
+        }
+        guard value.split(separator: " ").count == 1 else {
+            return String(localized: "The alias must be exactly one word.")
+        }
+        return nil
+    }
+
+    private func onReplacementChange(value: String) -> String? {
+        guard !value.isEmpty else {
+            return String(localized: "The replacement must not be empty.")
+        }
+        guard value.starts(with: "!moblin") else {
+            return String(localized: "The replacement must start with !moblin.")
+        }
+        guard value.split(separator: " ").count > 1 else {
+            return String(localized: "The replacement must be more than one word.")
+        }
+        return nil
+    }
+
+    var body: some View {
+        NavigationLink {
+            Form {
+                Section {
+                    NavigationLink {
+                        TextEditView(title: String(localized: "Alias"), value: alias.alias, onChange: onAliasChange) {
+                            alias.alias = $0
+                        }
+                    } label: {
+                        TextItemView(name: String(localized: "Alias"), value: alias.alias)
+                    }
+                    NavigationLink {
+                        TextEditView(
+                            title: String(localized: "Replacement"),
+                            value: alias.replacement,
+                            onChange: onReplacementChange
+                        ) {
+                            alias.replacement = $0
+                        }
+                    } label: {
+                        TextItemView(name: String(localized: "Replacement"), value: alias.replacement)
+                    }
                 }
             }
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.map)
-                } label: {
-                    Text("!moblin map zoom out")
-                }
-            } footer: {
-                Text("Zoom out map widget temporarily.")
+            .navigationTitle("Alias")
+        } label: {
+            HStack {
+                Text(alias.alias)
+                Spacer()
+                Text(alias.replacement)
+                    .lineLimit(1)
+                    .foregroundStyle(.gray)
             }
+        }
+    }
+}
+
+private struct ChatBotAliasesSettingsView: View {
+    @ObservedObject var chat: SettingsChat
+
+    var body: some View {
+        Form {
             Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.tts)
-                } label: {
-                    Text("!moblin tts/say ...")
+                List {
+                    ForEach(chat.aliases) { alias in
+                        ChatBotAliasSettingsView(alias: alias)
+                    }
+                    .onMove { froms, to in
+                        chat.aliases.move(fromOffsets: froms, toOffset: to)
+                    }
+                    .onDelete { offsets in
+                        chat.aliases.remove(atOffsets: offsets)
+                    }
                 }
-            } footer: {
-                VStack(alignment: .leading) {
-                    Text("!moblin tts on")
-                    Text("Turn on chat text to speech.")
-                    Text("")
-                    Text("!moblin tts off")
-                    Text("Turn off chat text to speech.")
-                    Text("")
-                    Text("!moblin say <message>")
-                    Text("Say given message.")
-                }
-            }
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.audio!)
-                } label: {
-                    Text("!moblin mute/unmute")
-                }
-            } footer: {
-                VStack(alignment: .leading) {
-                    Text("!moblin mute")
-                    Text("Mute audio.")
-                    Text("")
-                    Text("!moblin unmute")
-                    Text("Unmute audio.")
-                }
-            }
-            Section {
-                NavigationLink {
-                    PermissionsSettingsView(permissions: permissions.tesla!)
-                } label: {
-                    Text("!moblin tesla ...")
-                }
-            } footer: {
-                VStack(alignment: .leading) {
-                    Text("!moblin tesla trunk open")
-                    Text("Open the trunk.")
-                    Text("")
-                    Text("!moblin tesla trunk close")
-                    Text("Close the trunk.")
-                    Text("")
-                    Text("!moblin tesla media next")
-                    Text("Next track.")
-                    Text("")
-                    Text("!moblin tesla media previous")
-                    Text("Previous track.")
-                    Text("")
-                    Text("!moblin tesla media toggle-playback")
-                    Text("Toggle playback.")
+                CreateButtonView {
+                    chat.aliases.append(SettingsChatBotAlias())
                 }
             }
         }
-        .navigationTitle("Commands")
+        .navigationTitle("Aliases")
     }
 }
 
@@ -245,6 +478,11 @@ struct ChatBotSettingsView: View {
                     ChatBotCommandsSettingsView()
                 } label: {
                     Text("Commands")
+                }
+                NavigationLink {
+                    ChatBotAliasesSettingsView(chat: model.database.chat)
+                } label: {
+                    Text("Aliases")
                 }
             }
             Section {
